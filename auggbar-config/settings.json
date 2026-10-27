@@ -1,0 +1,30 @@
+{
+  "bar": {
+    "position": "top",
+    "height": 28,
+    "background": "transparent",
+    "cornerRadius": 12,
+    "padding": 12,
+    "spacing": 6,
+    "useTheme": true
+  },
+  "widgets": [
+    {"id": "launcher", "enabled": true, "order": 0, "label": "Launcher"},
+    {"id": "workspaces", "enabled": true, "order": 1, "label": "Workspaces"},
+    {"id": "weather", "enabled": true, "order": 10, "label": "Weather"},
+    {"id": "calendar", "enabled": true, "order": 11, "label": "Calendar"},
+    {"id": "nowplaying", "enabled": true, "order": 12, "label": "Now Playing"},
+    {"id": "netspeed", "enabled": true, "order": 20, "label": "Network Speed"},
+    {"id": "audio", "enabled": true, "order": 21, "label": "Audio"},
+    {"id": "mic", "enabled": true, "order": 22, "label": "Microphone"},
+    {"id": "bluetooth", "enabled": true, "order": 23, "label": "Bluetooth"},
+    {"id": "scoreboard", "enabled": true, "order": 30, "label": "Scoreboard"},
+    {"id": "display", "enabled": true, "order": 31, "label": "Display"},
+    {"id": "updater", "enabled": true, "order": 40, "label": "Updater"},
+    {"id": "clock", "enabled": true, "order": 50, "label": "Clock"}
+  ],
+  "plugins": {
+    "scoreboard": {"enabled": true},
+    "display": {"enabled": true}
+  }
+}

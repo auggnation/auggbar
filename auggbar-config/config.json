@@ -1,0 +1,24 @@
+{
+  "bar": {
+    "position": "top",
+    "height": 26,
+    "showBackground": true,
+    "spacing": 4,
+    "padding": 12
+  },
+  "widgets": {
+    "launcher": {"enabled": true, "order": 0},
+    "workspaces": {"enabled": true, "order": 1},
+    "weather": {"enabled": true, "order": 10},
+    "calendar": {"enabled": true, "order": 11},
+    "nowplaying": {"enabled": true, "order": 12},
+    "netspeed": {"enabled": true, "order": 20},
+    "audio": {"enabled": true, "order": 21},
+    "mic": {"enabled": true, "order": 22},
+    "bluetooth": {"enabled": true, "order": 23},
+    "scoreboard": {"enabled": true, "order": 30},
+    "display": {"enabled": true, "order": 31},
+    "updater": {"enabled": true, "order": 40}
+  },
+  "plugins": {}
+}
