@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Command-line front-end for the Auggment Scoreboard Waybar port.
+
+    auggment-scoreboard bar            render one tile (Waybar exec / interval)
+    auggment-scoreboard bar --no-advance
+    auggment-scoreboard board          open the scores board
+    auggment-scoreboard settings       open the settings menu
+    auggment-scoreboard next|prev      step the rotation and refresh Waybar
+    auggment-scoreboard refresh        force a refetch and refresh Waybar
+    auggment-scoreboard signal         just poke Waybar to re-run the module
+
+Wired into Waybar with:
+
+    "custom/auggment-scoreboard": {
+      "exec": "~/.config/quickshell/quickshell-scripts/auggment-scoreboard/auggment-scoreboard bar",
+      "return-type": "json",
+      "interval": 6,
+      "signal": 8,
+      "on-click": "auggment-scoreboard board",
+      "on-click-right": "auggment-scoreboard settings",
+      "on-scroll-up": "auggment-scoreboard prev",
+      "on-scroll-down": "auggment-scoreboard next"
+    }
+"""
+
+import os
+import shutil
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import scoreboard_lib as lib  # noqa: E402
+
+
+
+def run_script(name, args=None):
+    script = os.path.join(HERE, name)
+    os.execv(sys.executable, [sys.executable, script] + (args or []))
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "bar"
+    if cmd == "bar":
+        run_script("scoreboard-bar.py", sys.argv[2:])
+    elif cmd in ("json", "tiles"):
+        run_script("scoreboard-json.py")
+    elif cmd == "board":
+        run_script("scoreboard-board.py")
+    elif cmd == "settings":
+        run_script("scoreboard-settings.py")
+    elif cmd in ("next", "prev"):
+        config = lib.load_config()
+        tl = lib.tiles(lib.get_scores(config), config)
+        if len(tl) > 1:
+            idx = lib.get_rotate_index()
+            lib.set_rotate_index((idx + (1 if cmd == "next" else -1)) % len(tl))
+        
+    elif cmd in ("refresh", "signal"):
+        if cmd == "refresh":
+            lib.get_scores(lib.load_config(), force=True)
+        
+    else:
+        print(__doc__)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

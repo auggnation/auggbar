@@ -1,0 +1,159 @@
+{
+  "_help": "Bar plugins. Right-click or Alt+click empty bar space for the plugin menu, or a plugin for its settings. Each entry: enabled, section (left, center-left, center, center-right, right, system), order (low = further left), options.",
+  "widgets": [
+    {
+      "id": "launcher",
+      "enabled": true,
+      "section": "left",
+      "order": 0,
+      "label": "Launcher"
+    },
+    {
+      "id": "weather",
+      "enabled": true,
+      "section": "left",
+      "order": 1,
+      "label": "Weather"
+    },
+    {
+      "id": "workspaces",
+      "enabled": true,
+      "section": "left",
+      "order": 2,
+      "label": "Workspaces"
+    },
+    {
+      "id": "title",
+      "enabled": true,
+      "section": "left",
+      "order": 3,
+      "label": "Window title"
+    },
+    {
+      "id": "cava",
+      "enabled": true,
+      "section": "center-left",
+      "order": 0,
+      "label": "Visualizer"
+    },
+    {
+      "id": "power",
+      "enabled": true,
+      "section": "center-left",
+      "order": 1,
+      "label": "Power"
+    },
+    {
+      "id": "clock",
+      "enabled": true,
+      "section": "center",
+      "order": 0,
+      "label": "Clock"
+    },
+    {
+      "id": "nowplaying",
+      "enabled": true,
+      "section": "center-right",
+      "order": 0,
+      "label": "Now playing"
+    },
+    {
+      "id": "scoreboard",
+      "enabled": true,
+      "section": "right",
+      "order": 0,
+      "label": "Scoreboard"
+    },
+    {
+      "id": "display",
+      "enabled": true,
+      "section": "right",
+      "order": 1,
+      "label": "Display"
+    },
+    {
+      "id": "separator",
+      "enabled": true,
+      "section": "right",
+      "order": 2,
+      "label": "Divider"
+    },
+    {
+      "id": "system",
+      "enabled": true,
+      "section": "right",
+      "order": 3,
+      "label": "System card"
+    },
+    {
+      "id": "viking",
+      "enabled": true,
+      "section": "right",
+      "order": 4,
+      "label": "Viking"
+    },
+    {
+      "id": "updater",
+      "enabled": true,
+      "section": "right",
+      "order": 5,
+      "label": "Updater"
+    },
+    {
+      "id": "tray",
+      "enabled": true,
+      "section": "right",
+      "order": 6,
+      "label": "Tray"
+    },
+    {
+      "id": "netspeed",
+      "enabled": true,
+      "section": "system",
+      "order": 0,
+      "label": "Network speed"
+    },
+    {
+      "id": "network",
+      "enabled": true,
+      "section": "system",
+      "order": 1,
+      "label": "Wi-Fi"
+    },
+    {
+      "id": "audio",
+      "enabled": true,
+      "section": "system",
+      "order": 2,
+      "label": "Audio"
+    },
+    {
+      "id": "mic",
+      "enabled": true,
+      "section": "system",
+      "order": 3,
+      "label": "Microphone"
+    },
+    {
+      "id": "camera",
+      "enabled": true,
+      "section": "system",
+      "order": 4,
+      "label": "Camera"
+    },
+    {
+      "id": "bluetooth",
+      "enabled": true,
+      "section": "system",
+      "order": 5,
+      "label": "Bluetooth"
+    },
+    {
+      "id": "battery",
+      "enabled": true,
+      "section": "system",
+      "order": 6,
+      "label": "Battery"
+    }
+  ]
+}

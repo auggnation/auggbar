@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# auggment-weather — current conditions + a short hourly outlook for the
+# auggment bar. Emits a single JSON object on stdout; cached briefly to spare
+# the upstream APIs. Pass --force to bypass the cache.
+#
+#   {"ok":true,"temp":"52°F","cond":"Patchy rain nearby","icon":"<glyph>",
+#    "place":"Auburn","code":176,"night":false,
+#    "hourly":[{"time":"15:00","temp":"54°F","icon":"<glyph>"}, ...]}
+#
+# Current conditions come from wttr.in (matching the Omarchy glyph set);
+# the hourly outlook comes from Open-Meteo (true 1-hour steps).
+set -uo pipefail
+
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/auggment"
+CACHE="$CACHE_DIR/weather.json"
+TTL="${AUGGMENT_WEATHER_TTL:-600}"
+
+mkdir -p "$CACHE_DIR"
+
+force=0
+[[ "${1:-}" == "--force" || "${1:-}" == "-f" ]] && force=1
+
+if (( ! force )) && [[ -s "$CACHE" ]]; then
+  now=$(date +%s)
+  mtime=$(stat -c %Y "$CACHE" 2>/dev/null || echo 0)
+  if (( now - mtime < TTL )); then
+    cat "$CACHE"; exit 0
+  fi
+fi
+
+fallback() {
+  if [[ -s "$CACHE" ]]; then cat "$CACHE"; else printf '{"ok":false}\n'; fi
+  exit 0
+}
+
+# weatherCode (WWO) -> Nerd Font glyph. Standard WWO icon mapping used by the
+# bar's weather widget.
+glyph_for() {
+  local weather_code="$1" night="${2:-false}" icon=""
+  # --- BEGIN spliced mapping ---
+case $weather_code in
+  113) [[ $night == "true" ]] && icon="" || icon="" ;;
+  116) [[ $night == "true" ]] && icon="" || icon="" ;;
+  119|122) icon="" ;;
+  143|248|260) icon="" ;;
+  176|263|353) [[ $night == "true" ]] && icon="" || icon="" ;;
+  179|227|230|323|326|368) [[ $night == "true" ]] && icon="" || icon="" ;;
+  182|185|281|284|311|314|317|320|350|362|365|374|377) icon="" ;;
+  200|386|389|392|395) icon="" ;;
+  266|293|296|299|302|305|308|356|359) icon="" ;;
+  329|332|335|338|371) icon="" ;;
+  *) icon="" ;;
+esac
+  # --- END spliced mapping ---
+  printf '%s' "$icon"
+}
+
+# WMO (Open-Meteo) -> WWO (wttr) so the hourly icons reuse the table above.
+wmo_to_wwo() {
+  case "$1" in
+    0) echo 113 ;;
+    1 | 2) echo 116 ;;
+    3) echo 122 ;;
+    45 | 48) echo 143 ;;
+    51 | 53 | 55) echo 266 ;;
+    56 | 57) echo 281 ;;
+    61) echo 296 ;;
+    63) echo 302 ;;
+    65) echo 308 ;;
+    66 | 67) echo 314 ;;
+    71) echo 326 ;;
+    73) echo 329 ;;
+    75) echo 338 ;;
+    77) echo 368 ;;
+    80) echo 353 ;;
+    81) echo 356 ;;
+    82) echo 359 ;;
+    85 | 86) echo 368 ;;
+    95) echo 200 ;;
+    96 | 99) echo 389 ;;
+    *) echo 119 ;;
+  esac
+}
+
+# --- resolve location ----------------------------------------------------
+loc_file="${XDG_STATE_HOME:-$HOME/.local/state}/auggment/weather.json"
+query=""
+coord=""
+if [[ -s "$loc_file" ]]; then
+  lat=$(jq -r '.latitude // empty' "$loc_file" 2>/dev/null)
+  lon=$(jq -r '.longitude // empty' "$loc_file" 2>/dev/null)
+  if [[ -n "$lat" && -n "$lon" ]]; then
+    coord="$lat,$lon"
+  else
+    place=$(jq -r '.name // empty' "$loc_file" 2>/dev/null)
+    [[ -n "$place" ]] && query=$(jq -rn --arg v "$place" '$v|@uri')
+  fi
+fi
+if [[ -z "$coord" && -z "$query" ]]; then
+  place=$(curl -fsS --max-time 4 "https://wttr.in/?format=%l" 2>/dev/null)
+  place=${place%%,*}
+  [[ -n "$place" ]] && query=$(jq -rn --arg v "$place" '$v|@uri')
+fi
+
+# --- current conditions (wttr.in) ----------------------------------------
+raw=$(curl -fsS --max-time 6 "https://wttr.in/${query}?format=j1" 2>/dev/null)
+[[ -z "$raw" ]] && fallback
+
+data=$(jq -r '[.current_condition[0].temp_F, .current_condition[0].temp_C, .current_condition[0].weatherCode, .current_condition[0].weatherDesc[0].value, .weather[0].astronomy[0].sunrise, .weather[0].astronomy[0].sunset, (.nearest_area[0].areaName[0].value // ""), (.nearest_area[0].latitude // ""), (.nearest_area[0].longitude // "")] | @tsv' <<<"$raw" 2>/dev/null)
+[[ -z "$data" ]] && fallback
+
+IFS=$'\t' read -r temp_f temp_c weather_code cond sunrise sunset place nlat nlon <<<"$data"
+[[ -z "$temp_c" || -z "$temp_f" || -z "$weather_code" ]] && fallback
+cond=${cond%"${cond##*[![:space:]]}"}
+
+# Day/night (also gives 24h clock sunrise/sunset for the hourly icons).
+night=false
+sr24=""
+ss24=""
+if [[ "$sunrise" =~ ^[0-9]{1,2}:[0-9]{2}\ [AP]M$ && "$sunset" =~ ^[0-9]{1,2}:[0-9]{2}\ [AP]M$ ]]; then
+  now_epoch=$(date +%s)
+  sr=$(date -d "today $sunrise" +%s 2>/dev/null || echo 0)
+  ss=$(date -d "today $sunset" +%s 2>/dev/null || echo 0)
+  sr24=$(date -d "today $sunrise" +%H:%M 2>/dev/null || echo "")
+  ss24=$(date -d "today $sunset" +%H:%M 2>/dev/null || echo "")
+  if (( sr > 0 && ss > 0 && ( now_epoch < sr || now_epoch >= ss ) )); then night=true; fi
+fi
+
+icon=$(glyph_for "$weather_code" "$night")
+
+# Units follow the system locale (these few regions use Fahrenheit).
+temp="${temp_c}°C"
+unit="celsius"
+case "${LC_MEASUREMENT:-${LC_ALL:-${LANG:-}}}" in
+  *_US* | *_LR* | *_MM* | *_BS* | *_BZ* | *_PW* | *_FM* | *_MH* | *_GU* | *_VI* | *_PR*)
+    temp="${temp_f}°F"; unit="fahrenheit" ;;
+esac
+
+# --- hourly outlook (Open-Meteo, next 5 hours) ---------------------------
+hourly_json="[]"
+[[ -z "$coord" && -n "$nlat" && -n "$nlon" ]] && coord="$nlat,$nlon"
+if [[ -n "$coord" ]]; then
+  om_url="https://api.open-meteo.com/v1/forecast?latitude=${coord%,*}&longitude=${coord#*,}&hourly=temperature_2m,weather_code&timezone=auto&forecast_days=2&temperature_unit=${unit}"
+  om=$(curl -fsS --max-time 6 "$om_url" 2>/dev/null)
+  if [[ -n "$om" ]]; then
+    now_h=$(date +%Y-%m-%dT%H:00)
+    rows=$(jq -r --arg now "$now_h" '[.hourly.time, .hourly.temperature_2m, .hourly.weather_code] | transpose | map(select(.[0] >= $now)) | .[0:5] | .[] | [(.[0][11:16]), (.[1] | round | tostring), (.[2] | tostring)] | @tsv' <<<"$om" 2>/dev/null)
+    if [[ -n "$rows" ]]; then
+      hourly_json="["
+      first=1
+      while IFS=$'\t' read -r hhmm htemp hcode; do
+        [[ -z "$hhmm" ]] && continue
+        hnight=false
+        if [[ -n "$sr24" && -n "$ss24" ]]; then
+          if [[ "$hhmm" < "$sr24" || ! "$hhmm" < "$ss24" ]]; then hnight=true; fi
+        fi
+        hglyph=$(glyph_for "$(wmo_to_wwo "$hcode")" "$hnight")
+        if [[ "$unit" == "fahrenheit" ]]; then htemp="${htemp}°F"; else htemp="${htemp}°C"; fi
+        (( first )) || hourly_json+=","
+        first=0
+        hourly_json+=$(jq -cn --arg t "$hhmm" --arg temp "$htemp" --arg icon "$hglyph" '{time:$t, temp:$temp, icon:$icon}')
+      done <<<"$rows"
+      hourly_json+="]"
+    fi
+  fi
+fi
+
+jq -cn \
+  --arg temp "$temp" \
+  --arg cond "$cond" \
+  --arg icon "$icon" \
+  --arg place "$place" \
+  --argjson code "${weather_code:-0}" \
+  --argjson night "$night" \
+  --argjson hourly "$hourly_json" \
+  '{ok:true, temp:$temp, cond:$cond, icon:$icon, place:$place, code:$code, night:$night, hourly:$hourly}' \
+  > "$CACHE.tmp" 2>/dev/null && mv -f "$CACHE.tmp" "$CACHE"
+
+cat "$CACHE"

@@ -1,0 +1,879 @@
+#!/usr/bin/env python3
+# auggment-calendar — Google Calendar backend for the auggment Quickshell bar.
+#
+# Read-only. Speaks one JSON object on stdout (the same contract as
+# auggment-weather) so the bar can consume it with Process/StdioCollector.
+# Diagnostics go to stderr.
+#
+#   status                          what is linked / configured
+#   set-client --id ID --secret S   store the OAuth client (Desktop app)
+#   set-client --clear
+#   login [--no-open]               OAuth loopback flow; opens the browser
+#   logout --account EMAIL
+#   calendars [--force]             every calendar of every account
+#   toggle --account EMAIL --id CAL flip a calendar's enabled flag
+#   events [--month YYYY-MM] [--agenda-days N] [--force]
+#
+# State lives in ~/.local/state/auggment/calendar/ ; anything holding a token
+# is written 0600.
+#
+# Auth notes worth knowing:
+#   * The OAuth client must be a Google Cloud "Desktop app" client. Google
+#     allows the loopback redirect (http://127.0.0.1:<random port>) for that
+#     client type without registering the port, so we bind a free one per run.
+#   * PKCE (S256) is used, plus `prompt=consent` so a refresh token is always
+#     issued.
+#   * If the Cloud project's OAuth consent screen is left in "Testing" status
+#     Google expires the refresh token after 7 days. Publish the app
+#     (Publishing status -> In production) to get a long-lived token.
+
+import base64
+import hashlib
+import http.server
+import json
+import os
+import secrets
+import socket
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import date, datetime, timedelta
+
+HOME = os.path.expanduser("~")
+STATE = os.path.join(
+    os.environ.get("XDG_STATE_HOME", os.path.join(HOME, ".local", "state")),
+    "auggment",
+    "calendar",
+)
+CLIENT_F = os.path.join(STATE, "client.json")
+ACCOUNTS_F = os.path.join(STATE, "accounts.json")
+CALS_CFG_F = os.path.join(STATE, "calendars.json")
+CALS_CACHE_F = os.path.join(STATE, "calendars-cache.json")
+CACHE_F = os.path.join(STATE, "cache.json")
+FEEDS_F = os.path.join(STATE, "feeds.json")
+FEEDS_CACHE_F = os.path.join(STATE, "feeds-cache.json")
+LOGIN_URL_F = os.path.join(STATE, "login_url")
+
+# The iCalendar reader lives with this script's libraries so feeds can be
+# expanded without pulling in python-dateutil / python-icalendar.
+sys.path.insert(0, os.path.join(HOME, ".local", "lib", "auggment"))
+import ics  # noqa: E402
+
+AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+TOKEN_URL = "https://oauth2.googleapis.com/token"
+API = "https://www.googleapis.com/calendar/v3"
+SCOPE = "openid email https://www.googleapis.com/auth/calendar.readonly"
+
+CAL_TTL = 600        # seconds to trust the calendarList
+EVENT_TTL = 300      # seconds to trust an events payload
+# How long to wait for the browser round-trip. Overridable so the flow can be
+# exercised in tests without sitting here for five minutes.
+LOGIN_TIMEOUT = int(os.environ.get("AUGGMENT_CALENDAR_LOGIN_TIMEOUT", "300"))
+
+
+# --------------------------------------------------------------- plumbing
+
+def out(obj, code=0):
+    json.dump(obj, sys.stdout, ensure_ascii=False)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    return code
+
+
+def err(*a):
+    print(*a, file=sys.stderr, flush=True)
+
+
+def ensure_dir():
+    os.makedirs(STATE, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(STATE, 0o700)
+    except OSError:
+        pass
+
+
+def read_json(path, default):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def write_json(path, obj, mode=0o600):
+    ensure_dir()
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=1)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def http_json(url, data=None, headers=None, timeout=30):
+    """Return (status, parsed_json_or_ {'raw': ...})."""
+    body = None
+    hdrs = {"User-Agent": "auggment-calendar/1.0", "Accept": "application/json"}
+    if data is not None:
+        body = urllib.parse.urlencode(data).encode()
+        hdrs["Content-Type"] = "application/x-www-form-urlencoded"
+    if headers:
+        hdrs.update(headers)
+    req = urllib.request.Request(url, data=body, headers=hdrs)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read()
+            try:
+                return r.status, (json.loads(raw) if raw else {})
+            except ValueError:
+                return r.status, {"raw": raw.decode("utf-8", "replace")}
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            return e.code, json.loads(raw)
+        except ValueError:
+            return e.code, {"raw": raw.decode("utf-8", "replace")}
+    except Exception as e:  # noqa: BLE001 - network failures are reported as JSON
+        return 0, {"error": "network", "error_description": str(e)}
+
+
+def parse_args(argv):
+    opts, pos = {}, []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a.startswith("--"):
+            key = a[2:]
+            if "=" in key:
+                key, val = key.split("=", 1)
+                opts[key] = val
+            elif i + 1 < len(argv) and not argv[i + 1].startswith("--"):
+                opts[key] = argv[i + 1]
+                i += 1
+            else:
+                opts[key] = True
+        else:
+            pos.append(a)
+        i += 1
+    return opts, pos
+
+
+# --------------------------------------------------------------- accounts
+
+def load_accounts():
+    a = read_json(ACCOUNTS_F, [])
+    return a if isinstance(a, list) else []
+
+
+def save_accounts(accts):
+    write_json(ACCOUNTS_F, accts, 0o600)
+
+
+def access_token(acct, force=False):
+    if not force and acct.get("access_token") and acct.get("expires_at", 0) > time.time() + 60:
+        return acct["access_token"]
+    client = read_json(CLIENT_F, None)
+    if not client:
+        raise RuntimeError("no OAuth client configured")
+    st, res = http_json(
+        TOKEN_URL,
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": acct.get("refresh_token", ""),
+            "client_id": client.get("client_id", ""),
+            "client_secret": client.get("client_secret", ""),
+        },
+    )
+    if st != 200 or "access_token" not in res:
+        msg = res.get("error_description") or res.get("error") or str(res)
+        if res.get("error") == "invalid_grant":
+            msg += " (the login expired — sign in again; if this keeps happening, publish the Google Cloud OAuth app so tokens stop expiring weekly)"
+        raise RuntimeError(msg)
+    acct["access_token"] = res["access_token"]
+    acct["expires_at"] = time.time() + int(res.get("expires_in", 3600) or 3600)
+    if res.get("refresh_token"):
+        acct["refresh_token"] = res["refresh_token"]
+    return acct["access_token"]
+
+
+def auth_headers(acct):
+    return {"Authorization": "Bearer " + access_token(acct)}
+
+
+# --------------------------------------------------------------- calendars
+
+def normalize_cal(c):
+    return {
+        "id": c.get("id", ""),
+        "summary": c.get("summary") or c.get("id", ""),
+        "color": c.get("backgroundColor") or "#7aa2f7",
+        "primary": bool(c.get("primary")),
+        "selected": bool(c.get("selected")),
+        "accessRole": c.get("accessRole", ""),
+        "timeZone": c.get("timeZone", ""),
+    }
+
+
+def fetch_calendar_list(acct, force=False):
+    cache = read_json(CALS_CACHE_F, {})
+    ent = cache.get(acct["email"]) if isinstance(cache, dict) else None
+    if not force and ent and time.time() - ent.get("fetched", 0) < CAL_TTL:
+        return ent.get("items", [])
+    st, res = http_json(
+        API + "/users/me/calendarList?maxResults=250&minAccessRole=reader",
+        headers=auth_headers(acct),
+    )
+    if st != 200:
+        raise RuntimeError(res.get("error", {}).get("message") if isinstance(res.get("error"), dict) else str(res))
+    items = [normalize_cal(c) for c in res.get("items", [])]
+    if not isinstance(cache, dict):
+        cache = {}
+    cache[acct["email"]] = {"fetched": time.time(), "items": items}
+    write_json(CALS_CACHE_F, cache)
+    return items
+
+
+def load_cals_cfg():
+    c = read_json(CALS_CFG_F, {})
+    return c if isinstance(c, dict) else {}
+
+
+def is_enabled(cfg, email, cal):
+    key = email + "|" + cal["id"]
+    if key in cfg:
+        return bool(cfg[key].get("enabled"))
+    # Default to what the user already sees in Google Calendar: the primary
+    # calendar plus anything they have ticked, so we don't drag in holidays
+    # and birthdays uninvited.
+    return bool(cal.get("primary") or cal.get("selected"))
+
+
+# -------------------------------------------------------------------- feeds
+# Pasting a calendar's private iCal address needs no sign-in, no 2FA and no
+# Google Cloud project: the URL itself carries a read-only token. One URL per
+# calendar, and calendars from several accounts can be mixed freely.
+
+FEED_PALETTE = [
+    "#039be5", "#33b679", "#8e24aa", "#e67c73", "#f6bf26",
+    "#3f51b5", "#0b8043", "#d50000", "#f4511e", "#7986cb",
+]
+
+
+def load_feeds():
+    feeds = read_json(FEEDS_F, [])
+    return feeds if isinstance(feeds, list) else []
+
+
+def save_feeds(feeds):
+    write_json(FEEDS_F, feeds, 0o600)
+
+
+def feed_id(url):
+    return hashlib.sha1(url.encode()).hexdigest()[:10]
+
+
+def feed_color(url):
+    h = int(hashlib.sha1(url.encode()).hexdigest()[:8], 16)
+    return FEED_PALETTE[h % len(FEED_PALETTE)]
+
+
+def normalize_feed_url(url):
+    u = (url or "").strip()
+    if u.lower().startswith("webcal://"):
+        u = "https://" + u[len("webcal://"):]
+    return u
+
+
+def fetch_feed_text(url, force=False):
+    cache = read_json(FEEDS_CACHE_F, {})
+    entry = cache.get(url) if isinstance(cache, dict) else None
+    if not force and entry and time.time() - entry.get("fetched", 0) < CAL_TTL:
+        return entry.get("text", "")
+    req = urllib.request.Request(url, headers={"User-Agent": "auggment-calendar/1.0"})
+    with urllib.request.urlopen(req, timeout=25) as r:
+        text = r.read().decode("utf-8", "replace")
+    if not isinstance(cache, dict):
+        cache = {}
+    cache[url] = {"fetched": time.time(), "text": text}
+    write_json(FEEDS_CACHE_F, cache)
+    return text
+
+
+def normalize_feed_event(ev, feed):
+    start, end, allday = ev["start"], ev["end"], ev["allday"]
+    if allday:
+        d0 = start
+        d1 = end - timedelta(days=1)  # iCal DTEND is exclusive
+        if d1 < d0:
+            d1 = d0
+        t0 = t1 = ""
+        sort = int(datetime.combine(d0, datetime.min.time()).astimezone().timestamp())
+    else:
+        sl, el = start.astimezone(), end.astimezone()
+        d0, d1 = sl.date(), el.date()
+        if el.hour == 0 and el.minute == 0 and el.second == 0 and d1 > d0:
+            d1 -= timedelta(days=1)
+        t0, t1 = sl.strftime("%H:%M"), el.strftime("%H:%M")
+        sort = int(sl.timestamp())
+    return {
+        "id": (ev.get("uid") or "") + "@" + feed["id"],
+        "title": ev.get("title") or "(no title)",
+        "allday": allday,
+        "d0": d0.isoformat(),
+        "d1": d1.isoformat(),
+        "t0": t0,
+        "t1": t1,
+        "sort": sort,
+        "account": "ical",
+        "cal": feed["id"],
+        "calName": feed["name"],
+        "color": feed["color"],
+        "location": ev.get("location", ""),
+        "url": ev.get("url", ""),
+    }
+
+
+def fetch_feed_events(feeds, cfg, win_start, win_end):
+    events, cals, errors = [], [], []
+    for feed in feeds:
+        probe = {"id": feed["id"], "primary": True, "selected": True}
+        enabled = is_enabled(cfg, "ical", probe)
+        cals.append({
+            "id": feed["id"],
+            "summary": feed["name"],
+            "color": feed["color"],
+            "account": "ical",
+            "kind": "feed",
+            "enabled": enabled,
+            "primary": False,
+            "selected": True,
+        })
+        if not enabled:
+            continue
+        try:
+            text = fetch_feed_text(feed["url"])
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{feed['name']}: {e}")
+            continue
+        try:
+            got = ics.iter_events(text, win_start, win_end)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{feed['name']}: could not read the feed ({e})")
+            continue
+        for ev in got:
+            ne = normalize_feed_event(ev, feed)
+            if ne:
+                events.append(ne)
+    return events, cals, errors
+
+
+# ----------------------------------------------------------------- events
+
+def parse_dt(s):
+    if s is None:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    return datetime.fromisoformat(s)
+
+
+def normalize_event(it, email, cal):
+    if it.get("status") == "cancelled":
+        return None
+    st = it.get("start") or {}
+    en = it.get("end") or {}
+    allday = "date" in st and "dateTime" not in st
+    if allday:
+        try:
+            d0 = date.fromisoformat(st["date"])
+        except (KeyError, ValueError):
+            return None
+        try:
+            d1x = date.fromisoformat(en.get("date") or st["date"])
+        except ValueError:
+            d1x = d0 + timedelta(days=1)
+        d1 = d1x - timedelta(days=1)  # Google's end date is exclusive
+        if d1 < d0:
+            d1 = d0
+        t0 = t1 = ""
+        start_local = datetime.combine(d0, datetime.min.time()).astimezone()
+    else:
+        s = parse_dt(st.get("dateTime"))
+        if s is None:
+            return None
+        e = parse_dt(en.get("dateTime")) or s
+        sl, el = s.astimezone(), e.astimezone()
+        d0, d1 = sl.date(), el.date()
+        if el.hour == 0 and el.minute == 0 and el.second == 0 and d1 > d0:
+            d1 -= timedelta(days=1)
+        t0, t1 = sl.strftime("%H:%M"), el.strftime("%H:%M")
+        start_local = sl
+    return {
+        "id": it.get("id", ""),
+        "title": (it.get("summary") or "(no title)").strip(),
+        "allday": allday,
+        "d0": d0.isoformat(),
+        "d1": d1.isoformat(),
+        "t0": t0,
+        "t1": t1,
+        "sort": int(start_local.timestamp()),
+        "end": int((start_local + timedelta(minutes=1)).timestamp()) if allday else int(parse_dt(st.get("dateTime")).timestamp()),
+        "account": email,
+        "cal": cal["id"],
+        "calName": cal["summary"],
+        "color": cal["color"],
+        "location": (it.get("location") or "").strip(),
+        "url": it.get("htmlLink") or "",
+    }
+
+
+def month_grid_bounds(month_str):
+    y, m = (int(x) for x in month_str.split("-"))
+    first = date(y, m, 1)
+    grid_start = first - timedelta(days=first.weekday())  # Monday
+    return grid_start, grid_start + timedelta(days=42)
+
+
+def event_window(month_str, agenda_days):
+    """Everything we must fetch: the month's 6-week grid plus the agenda tail."""
+    grid_start, grid_end = month_grid_bounds(month_str)
+    today = date.today()
+    return min(grid_start, today), max(grid_end, today + timedelta(days=agenda_days))
+
+
+def fetch_events(accounts, cfg, win_start, win_end):
+    tmin = datetime.combine(win_start, datetime.min.time()).astimezone().isoformat()
+    tmax = datetime.combine(win_end, datetime.min.time()).astimezone().isoformat()
+
+    events, errors, cals = [], [], []
+    for acct in accounts:
+        try:
+            cal_list = fetch_calendar_list(acct)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{acct['email']}: {e}")
+            continue
+        for cal in cal_list:
+            enabled = is_enabled(cfg, acct["email"], cal)
+            cals.append({**cal, "account": acct["email"], "enabled": enabled})
+            if not enabled:
+                continue
+            st, res = http_json(
+                API
+                + "/calendars/"
+                + urllib.parse.quote(cal["id"], safe="")
+                + "/events?singleEvents=true&orderBy=startTime&maxResults=250"
+                + "&timeMin="
+                + urllib.parse.quote(tmin, safe="")
+                + "&timeMax="
+                + urllib.parse.quote(tmax, safe=""),
+                headers=auth_headers(acct),
+            )
+            if st != 200:
+                m = res.get("error")
+                m = m.get("message") if isinstance(m, dict) else str(res)
+                errors.append(f"{cal['summary']}: {m}")
+                continue
+            for it in res.get("items", []):
+                ev = normalize_event(it, acct["email"], cal)
+                if ev:
+                    events.append(ev)
+    events.sort(key=lambda e: (e["sort"], e["title"]))
+    return events, cals, errors
+
+
+# ------------------------------------------------------------------ login
+
+def cmd_login(opts):
+    client = read_json(CLIENT_F, None)
+    if not client or not client.get("client_id"):
+        return out(
+            {
+                "ok": False,
+                "error": "no OAuth client configured",
+                "hint": "Open the calendar panel's sign-in page and paste your Google Cloud "
+                        "'Desktop app' client ID and secret first.",
+            }
+        )
+
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    state = secrets.token_urlsafe(16)
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    redirect = f"http://127.0.0.1:{port}/"
+
+    url = AUTH_URL + "?" + urllib.parse.urlencode(
+        {
+            "client_id": client["client_id"],
+            "redirect_uri": redirect,
+            "response_type": "code",
+            "scope": SCOPE,
+            "access_type": "offline",
+            "prompt": "consent",
+            "include_granted_scopes": "true",
+            "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+        }
+    )
+
+    got = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):  # keep stderr clean
+            pass
+
+        def _page(self, code, text):
+            body = (
+                "<!doctype html><meta charset=utf-8><title>auggment</title>"
+                "<body style='margin:0;height:100vh;display:flex;align-items:center;"
+                "justify-content:center;background:#1a1b26;color:#a9b1d6;"
+                "font:16px system-ui,sans-serif'><div style='text-align:center'>"
+                f"<h2 style='font-weight:600'>{text}</h2></div>"
+            ).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            if "code" in q or "error" in q:
+                got.update({k: v[0] for k, v in q.items()})
+                self._page(200, "Signed in &mdash; you can close this tab.")
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+    ensure_dir()
+    srv = http.server.HTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    write_json(LOGIN_URL_F, {"url": url, "port": port, "started": time.time()}, 0o600)
+
+    err("open this URL to sign in:\n" + url)
+    if not opts.get("no-open"):
+        for opener in (["xdg-open", url],):
+            try:
+                subprocess.Popen(opener, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                break
+            except OSError:
+                pass
+
+    deadline = time.time() + LOGIN_TIMEOUT
+    while time.time() < deadline and not got:
+        time.sleep(0.2)
+    srv.shutdown()
+    srv.server_close()
+    try:
+        os.unlink(LOGIN_URL_F)
+    except OSError:
+        pass
+
+    if not got:
+        return out({"ok": False, "error": "timed out waiting for the browser sign-in"})
+    if got.get("error"):
+        return out({"ok": False, "error": got.get("error"), "description": got.get("error_description", "")})
+    if got.get("state") != state:
+        return out({"ok": False, "error": "state mismatch — sign-in aborted for safety"})
+
+    st, res = http_json(
+        TOKEN_URL,
+        {
+            "grant_type": "authorization_code",
+            "code": got.get("code", ""),
+            "client_id": client["client_id"],
+            "client_secret": client.get("client_secret", ""),
+            "redirect_uri": redirect,
+            "code_verifier": verifier,
+        },
+    )
+    if st != 200 or "refresh_token" not in res:
+        msg = res.get("error_description") or res.get("error") or str(res)
+        if st == 200 and "refresh_token" not in res:
+            msg = "Google returned no refresh token; remove the app's access at " \
+                  "https://myaccount.google.com/permissions and sign in again"
+        return out({"ok": False, "error": msg})
+
+    email = ""
+    if res.get("id_token"):
+        try:
+            payload = res["id_token"].split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            email = json.loads(base64.urlsafe_b64decode(payload)).get("email", "")
+        except Exception:  # noqa: BLE001
+            email = ""
+    if not email:
+        st2, ui = http_json(API.replace("/calendar/v3", "/oauth2/v2/userinfo"),
+                            headers={"Authorization": "Bearer " + res["access_token"]})
+        email = ui.get("email", "") if st2 == 200 else ""
+    if not email:
+        email = client["client_id"].split("-")[0][:12] + "@google"
+
+    accts = [a for a in load_accounts() if a.get("email") != email]
+    accts.append(
+        {
+            "email": email,
+            "refresh_token": res["refresh_token"],
+            "access_token": res.get("access_token", ""),
+            "expires_at": time.time() + int(res.get("expires_in", 3600) or 3600),
+            "scope": res.get("scope", SCOPE),
+            "added": time.time(),
+        }
+    )
+    save_accounts(accts)
+    write_json(CALS_CACHE_F, {})  # calendar list is per-account; drop stale cache
+    return out({"ok": True, "email": email, "accounts": [a["email"] for a in accts]})
+
+
+# -------------------------------------------------------------- commands
+
+def cmd_status(_opts):
+    client = read_json(CLIENT_F, None)
+    accts = load_accounts()
+    cid = (client or {}).get("client_id", "")
+    return out(
+        {
+            "ok": True,
+            "configured": bool(cid),
+            "clientIdTail": cid[-24:] if cid else "",
+            "hasSecret": bool((client or {}).get("client_secret")),
+            "accounts": [{"email": a.get("email", "")} for a in accts],
+            "feeds": [{"id": f.get("id", ""), "name": f.get("name", "")} for f in load_feeds()],
+            "state": STATE,
+        }
+    )
+
+
+def cmd_set_client(opts):
+    if opts.get("clear"):
+        for p in (CLIENT_F, ACCOUNTS_F, CALS_CACHE_F):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        return out({"ok": True, "configured": False})
+    cid = str(opts.get("id") or "").strip()
+    sec = str(opts.get("secret") or "").strip()
+    if not cid or not sec:
+        return out({"ok": False, "error": "both --id and --secret are required"})
+    write_json(CLIENT_F, {"client_id": cid, "client_secret": sec}, 0o600)
+    return out({"ok": True, "configured": True})
+
+
+def cmd_logout(opts):
+    email = str(opts.get("account") or "").strip()
+    if not email:
+        return out({"ok": False, "error": "--account is required"})
+    accts = [a for a in load_accounts() if a.get("email") != email]
+    save_accounts(accts)
+    write_json(CALS_CACHE_F, {})
+    write_json(CACHE_F, {})
+    return out({"ok": True, "accounts": [a["email"] for a in accts]})
+
+
+def cmd_feed_add(opts):
+    url = normalize_feed_url(opts.get("url"))
+    if not url.startswith(("http://", "https://")):
+        return out({"ok": False, "error": "that doesn't look like an http(s) or webcal address"})
+    try:
+        text = fetch_feed_text(url, force=True)
+    except Exception as e:  # noqa: BLE001
+        return out({"ok": False, "error": f"could not fetch that address ({e})"})
+    if "BEGIN:VCALENDAR" not in text.upper():
+        return out({"ok": False, "error": "that address didn't return an iCalendar feed"})
+
+    info = ics.calendar_info(text)
+    host = urllib.parse.urlparse(url).hostname or "calendar"
+    name = (info.get("name") or "").strip() or host
+
+    feeds = [f for f in load_feeds() if f.get("url") != url]
+    feed = {
+        "id": feed_id(url),
+        "url": url,
+        "name": name,
+        "color": (info.get("color") or "").strip() or feed_color(url),
+        "added": time.time(),
+    }
+    feeds.append(feed)
+    save_feeds(feeds)
+    write_json(CACHE_F, {})
+
+    try:
+        soon = len(ics.iter_events(text, date.today(), date.today() + timedelta(days=30)))
+    except Exception:  # noqa: BLE001
+        soon = 0
+    return out({"ok": True, "feed": feed, "upcoming": soon})
+
+
+def cmd_feed_remove(opts):
+    fid = str(opts.get("id") or "").strip()
+    if not fid:
+        return out({"ok": False, "error": "--id is required"})
+    feeds = [f for f in load_feeds() if f.get("id") != fid]
+    save_feeds(feeds)
+    cfg = load_cals_cfg()
+    cfg.pop("ical|" + fid, None)
+    write_json(CALS_CFG_F, cfg)
+    write_json(CACHE_F, {})
+    return out({"ok": True, "removed": fid, "count": len(feeds)})
+
+
+def cmd_calendars(opts):
+    cfg = load_cals_cfg()
+    force = bool(opts.get("force"))
+    cals, errors = [], []
+
+    for f in load_feeds():
+        probe = {"id": f["id"], "primary": True, "selected": True}
+        cals.append({
+            "id": f["id"],
+            "summary": f["name"],
+            "color": f["color"],
+            "account": "ical",
+            "kind": "feed",
+            "enabled": is_enabled(cfg, "ical", probe),
+            "primary": False,
+            "selected": True,
+        })
+
+    accts = load_accounts()
+    for a in accts:
+        try:
+            for c in fetch_calendar_list(a, force=force):
+                cals.append({
+                    **c,
+                    "account": a["email"],
+                    "enabled": is_enabled(cfg, a["email"], c),
+                    "kind": "google",
+                })
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{a['email']}: {e}")
+    return out({"ok": not errors, "accounts": [a["email"] for a in accts], "calendars": cals, "errors": errors})
+
+
+def cmd_toggle(opts):
+    acct = str(opts.get("account") or "").strip()
+    cal_id = str(opts.get("id") or "").strip()
+    if not acct or not cal_id:
+        return out({"ok": False, "error": "--account and --id are required"})
+    cfg = load_cals_cfg()
+    key = acct + "|" + cal_id
+    if key in cfg:
+        now = bool(cfg[key].get("enabled"))
+    elif acct == "ical":
+        now = True  # feeds are on by default; you added them deliberately
+    else:
+        # First toggle on a Google calendar with no explicit setting: start
+        # from the implicit default rather than from "false".
+        now = False
+        for a in load_accounts():
+            if a.get("email") != acct:
+                continue
+            try:
+                for c in fetch_calendar_list(a):
+                    if c["id"] == cal_id:
+                        now = is_enabled(cfg, acct, c)
+            except Exception:  # noqa: BLE001
+                pass
+    cfg[key] = {"enabled": not now}
+    write_json(CALS_CFG_F, cfg)
+    write_json(CACHE_F, {})
+    return out({"ok": True, "account": acct, "id": cal_id, "enabled": not now})
+
+
+def cmd_events(opts):
+    month = str(opts.get("month") or date.today().strftime("%Y-%m"))
+    try:
+        agenda_days = int(opts.get("agenda-days") or 14)
+    except (TypeError, ValueError):
+        agenda_days = 14
+    force = bool(opts.get("force"))
+
+    feeds = load_feeds()
+    accts = load_accounts()
+    client = read_json(CLIENT_F, None)
+    has_oauth = bool(accts) and bool(client and client.get("client_id"))
+
+    if not feeds and not has_oauth:
+        return out({
+            "ok": True,
+            "linked": False,
+            "month": month,
+            "agendaDays": agenda_days,
+            "accounts": [],
+            "calendars": [],
+            "events": [],
+            "errors": [],
+        })
+
+    key = f"{month}|{agenda_days}"
+    cache = read_json(CACHE_F, {})
+    if not force and isinstance(cache, dict) and cache.get("key") == key:
+        if time.time() - cache.get("fetched", 0) < EVENT_TTL:
+            return out({**cache.get("payload", {}), "cached": True})
+
+    if force:
+        try:
+            os.unlink(FEEDS_CACHE_F)
+        except OSError:
+            pass
+
+    win_start, win_end = event_window(month, agenda_days)
+    cfg = load_cals_cfg()
+    events, cals, errors = fetch_feed_events(feeds, cfg, win_start, win_end)
+
+    if has_oauth:
+        oe, oc, oerr = fetch_events(accts, cfg, win_start, win_end)
+        events += oe
+        cals += oc
+        errors += oerr
+        save_accounts(accts)  # access_token / expiry may have been refreshed
+
+    events.sort(key=lambda e: (e["sort"], e["title"]))
+    payload = {
+        "ok": not errors,
+        "linked": True,
+        "month": month,
+        "agendaDays": agenda_days,
+        "accounts": [{"email": a["email"]} for a in accts] if has_oauth else [],
+        "calendars": cals,
+        "events": events,
+        "errors": errors,
+    }
+    write_json(CACHE_F, {"key": key, "fetched": time.time(), "payload": payload})
+    return out({**payload, "cached": False})
+
+
+def main():
+    opts, pos = parse_args(sys.argv[1:])
+    cmd = pos[0] if pos else "status"
+    table = {
+        "status": cmd_status,
+        "set-client": cmd_set_client,
+        "login": cmd_login,
+        "logout": cmd_logout,
+        "calendars": cmd_calendars,
+        "toggle": cmd_toggle,
+        "events": cmd_events,
+        "feed-add": cmd_feed_add,
+        "feed-remove": cmd_feed_remove,
+    }
+    fn = table.get(cmd)
+    if fn is None:
+        return out({"ok": False, "error": f"unknown command: {cmd}", "commands": sorted(table)})
+    try:
+        return fn(opts)
+    except Exception as e:  # noqa: BLE001 - always answer in JSON
+        return out({"ok": False, "error": str(e)})
+
+
+if __name__ == "__main__":
+    sys.exit(main())

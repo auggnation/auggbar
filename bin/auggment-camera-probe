@@ -1,0 +1,14 @@
+#!/bin/bash
+# auggment-camera-probe - check the camera privacy switch now.
+#
+# The Framework 13 Pro webcam only reports its privacy switch while it is
+# streaming, so this runs the camera for about a second (the light flashes
+# only if the switch is on). auggment-privacy-switches.service sees the camera
+# in use, reads the switch, and the bar updates.
+set -u
+for d in /dev/video*; do
+    if v4l2-ctl -d "$d" --get-ctrl privacy >/dev/null 2>&1; then
+        exec v4l2-ctl -d "$d" --stream-mmap --stream-count=45 --stream-to=/dev/null >/dev/null 2>&1
+    fi
+done
+exit 1

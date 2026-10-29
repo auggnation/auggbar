@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Open the system monitor (btop++) in a terminal.
+#
+# auggment-theme-sync derives terminal palettes from the wallpaper, so btop is
+# launched inside a terminal emulator to inherit the current theme. Used as the
+# default launcher for the RunViking CPU widget.
+set -euo pipefail
+
+for term in \
+    "ghostty --title=btop++ -e" \
+    "alacritty -e" \
+    "kitty" \
+    "foot" \
+    "wezterm start --"; do
+    bin="${term%% *}"
+    if command -v "$bin" >/dev/null 2>&1; then
+        # shellcheck disable=SC2086
+        exec $term btop
+    fi
+done
+
+# No known terminal: run btop in whatever terminal provides the current tty.
+exec btop

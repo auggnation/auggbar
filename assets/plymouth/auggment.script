@@ -1,0 +1,70 @@
+# AUGGMENT boot splash - red ASCII wordmark, terminal / BIOS style.
+# Shown on boot, shutdown, and reboot (Plymouth runs the same theme for all).
+
+# Near-black background (matches the AUGGMENT dark palette).
+# There is no background image - the wordmark is the artwork.
+Window.SetBackgroundTopColor    (0.043, 0.055, 0.067);
+Window.SetBackgroundBottomColor (0.043, 0.055, 0.067);
+
+# ---------------------------------------------------------------- logo --------
+
+logo.image  = Image("logo.png");
+logo.sprite = Sprite(logo.image);
+
+# Fit the art inside 62% of the screen width and 55% of its height,
+# whichever is the tighter constraint, then re-centre it.
+screen_w = Window.GetWidth();
+screen_h = Window.GetHeight();
+img_w = logo.image.GetWidth();
+img_h = logo.image.GetHeight();
+
+scale_x = (screen_w * 0.62) / img_w;
+scale_y = (screen_h * 0.55) / img_h;
+scale = scale_x;
+if (scale_y < scale_x)
+  {
+    scale = scale_y;
+  }
+
+new_w = Math.Int(img_w * scale);
+new_h = Math.Int(img_h * scale);
+logo.image = logo.image.Scale(new_w, new_h);
+logo.sprite.SetImage(logo.image);
+
+logo.sprite.SetX(Window.GetX() + screen_w / 2 - new_w / 2);
+logo.sprite.SetY(Window.GetY() + screen_h / 2 - new_h / 2);
+
+# ------------------------------------------------------- blinking cursor ------
+# Blinks below the wordmark, like a terminal waiting for input.
+
+cursor.image  = Image.Text("_", 1.0, 0.231, 0.188);   # #ff3b30 (the red wordmark)
+cursor.sprite = Sprite(cursor.image);
+cursor.sprite.SetX(Window.GetX() + screen_w / 2 - new_w / 2 + 10);
+cursor.sprite.SetY(Window.GetY() + screen_h / 2 + new_h / 2 + 14);
+
+cursor_angle = 0;
+
+fun refresh_callback ()
+  {
+    cursor_angle += 0.10;
+    if (Math.Cos(cursor_angle) > 0)
+      {
+        cursor.sprite.SetOpacity(1);
+      }
+    else
+      {
+        cursor.sprite.SetOpacity(0);
+      }
+  }
+
+Plymouth.SetRefreshFunction(refresh_callback);
+
+# ------------------------------------------------------------- quit -----------
+
+fun quit_callback ()
+  {
+    logo.sprite.SetOpacity(1);
+    cursor.sprite.SetOpacity(0);
+  }
+
+Plymouth.SetQuitFunction(quit_callback);

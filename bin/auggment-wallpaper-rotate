@@ -1,0 +1,78 @@
+#!/bin/bash
+# Auggment wallpaper rotator.
+#
+#   auggment-wallpaper-rotate          rotate forever (started at login)
+#   auggment-wallpaper-rotate --once   change the wallpaper now and exit
+#
+# Picks a random wallpaper, sets it with swaybg, and (unless colour matching is
+# switched off) runs auggment-theme-sync so the whole desktop follows it.
+# Settings, written by the bar's display panel, are re-read every cycle:
+#   ~/.config/auggment/bg_dir            wallpaper folders, one per line
+#                                         (default ~/Documents/backgrounds)
+#   ~/.config/auggment/bg_interval       seconds between changes; 0 = paused
+#                                         (default 300)
+#   ~/.config/auggment/auto_color_match  1 = re-theme on every change (default)
+set -u
+
+CONFIG="$HOME/.config/auggment"
+STATE="$HOME/.local/state/auggment"
+LAST="$STATE/last-wallpaper"
+mkdir -p "$STATE"
+
+setting() { local v; v=$(cat "$CONFIG/$1" 2>/dev/null) && [ -n "$v" ] && echo "$v" || echo "$2"; }
+
+bg_dirs() {
+    if [ -s "$CONFIG/bg_dir" ]; then
+        grep -v '^[[:space:]]*$' "$CONFIG/bg_dir"
+    else
+        echo "$HOME/Documents/backgrounds"
+    fi
+}
+
+pick() {
+    local files=() dirs=() dir f
+    while IFS= read -r dir; do [ -d "$dir" ] && dirs+=("$dir"); done < <(bg_dirs)
+    ((${#dirs[@]})) || return 1
+    while IFS= read -r f; do files+=("$f"); done < <(
+        find -L "${dirs[@]}" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \
+            -o -iname '*.webp' -o -iname '*.bmp' \) 2>/dev/null)
+    ((${#files[@]})) || return 1
+    local last="" choice tries=0
+    [ -f "$LAST" ] && last="$(cat "$LAST")"
+    choice="$last"
+    while [[ "$choice" == "$last" && ${#files[@]} -gt 1 && $tries -lt 12 ]]; do
+        choice="${files[$((RANDOM % ${#files[@]}))]}"
+        tries=$((tries + 1))
+    done
+    printf '%s' "$choice"
+}
+
+apply() {
+    local img="$1" old
+    # Start the new swaybg before stopping the old one, so there is no blank frame.
+    old=$(pgrep -x swaybg || true)
+    swaybg -m fill -i "$img" >/dev/null 2>&1 &
+    sleep 1.5
+    [ -n "$old" ] && kill $old 2>/dev/null
+    printf '%s' "$img" > "$LAST"
+    if [ "$(setting auto_color_match 1)" != 0 ]; then
+        "$HOME/.local/bin/auggment-theme-sync" "$img" >/dev/null 2>&1 || true
+    fi
+}
+
+if [[ "${1:-}" == "--once" ]]; then
+    img="$(pick)" || exit 1
+    apply "$img"
+    exit 0
+fi
+
+while true; do
+    interval=$(setting bg_interval 300)
+    [[ "$interval" =~ ^[0-9]+$ ]] || interval=300
+    if (( interval > 0 )); then
+        if img="$(pick)"; then apply "$img"; else interval=30; fi
+    else
+        interval=30   # paused: check again for a new interval in 30 s
+    fi
+    sleep "$interval"
+done

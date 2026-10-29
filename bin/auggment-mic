@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""auggment-mic — report/toggle the internal (hardware) microphone.
+
+The Framework hardware mic switch does *not* unplug the DMIC from the bus; it
+swaps the microphone's data output for a dummy that emits silence (and gates the
+bias power). The endpoint therefore stays registered in PipeWire whether or not
+the switch is on, so a capture probe cannot tell us the switch position — a
+powered-off DMIC and a dummy both look like garbage/silence.
+
+Instead we read the Embedded Controller GPIO directly:
+
+    mic_sw == 0  ->  switch on   (microphone enabled / powered)
+    mic_sw == 1  ->  switch off  (privacy engaged, red dot showing)
+
+The desktop user can read this without root thanks to the installed udev rule
+that makes /dev/cros_ec group-writable for wheel.
+
+Actions:
+    status          presence + PipeWire mute + hardware switch state (JSON)
+    switch          hardware switch state only (JSON)
+    on/off/toggle   mute/unmute the internal mic
+    probe           short capture, to check whether the DMIC is actually live
+"""
+
+import json
+import math
+import os
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import wave
+
+HOME = os.path.expanduser("~")
+HELPER = os.path.join(HOME, ".local/bin/auggment-audio")
+INTERNAL = "digital microphone"
+# A powered DMIC has a low noise floor; an unpowered one reads full scale.
+DEAD_RMS = 8000.0
+
+# Framework EC tool (AUR: fw-ectool). Without it the hardware switch reads as unknown.
+ECTOOL = shutil.which("ectool") or shutil.which("fw-ectool")
+
+
+def audio():
+    try:
+        out = subprocess.run([HELPER], capture_output=True, text=True, timeout=5).stdout
+        return json.loads(out)
+    except Exception:
+        return {"sources": []}
+
+
+def internal_source():
+    for s in audio().get("sources", []):
+        if INTERNAL in (s.get("name") or "").lower():
+            return s
+    return None
+
+
+def default_source():
+    srcs = audio().get("sources", [])
+    for s in srcs:
+        if s.get("default"):
+            return s
+    return srcs[0] if srcs else None
+
+
+def read_gpio(name):
+    """Return the raw EC GPIO value (int) or None if unavailable."""
+    if not ECTOOL:
+        return None
+    try:
+        out = subprocess.run(
+            [ECTOOL, "--interface=dev", "gpioget", name],
+            capture_output=True, text=True, timeout=3,
+        ).stdout
+    except Exception:
+        return None
+    m = re.search(r"=\s*(-?\d+)", out)
+    return int(m.group(1)) if m else None
+
+
+PRIVACY_STATE = "/run/auggment/privacy.json"
+
+
+def switch_state():
+    """Hardware mic switch: (on, raw). raw/on are None when unreadable.
+
+    auggment-privacy-switches.service publishes the EC switch lines in
+    PRIVACY_STATE (no ectool or root needed); ectool is only a fallback."""
+    try:
+        with open(PRIVACY_STATE) as fh:
+            on = json.load(fh).get("mic_on")
+        if isinstance(on, bool):
+            return on, 0 if on else 1
+    except (OSError, ValueError):
+        pass
+    raw = read_gpio("mic_sw")
+    if raw is None:
+        return None, None
+    return raw == 0, raw
+
+
+def status():
+    s = internal_source()
+    on, raw = switch_state()
+    print(json.dumps({
+        "present": s is not None,
+        "muted": bool(s.get("muted")) if s else True,
+        "id": s.get("id") if s else None,
+        "name": (s.get("name", "") if s else ""),
+        "hw_on": on,
+        "hw_raw": raw,
+    }))
+    return 0
+
+
+def switch():
+    on, raw = switch_state()
+    print(json.dumps({"hw_on": on, "hw_raw": raw}))
+    return 0
+
+
+def probe():
+    s = internal_source()
+    if s is None:
+        print(json.dumps({"alive": False, "rms": 0.0}))
+        return 0
+
+    path = os.path.join(tempfile.gettempdir(), "auggment-mic-probe.wav")
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+    p = subprocess.Popen(
+        ["pw-record", "--target", str(s["id"]), "--rate", "48000", "--channels", "1",
+         "-n", "12000", path],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        p.wait(timeout=2.5)
+    except subprocess.TimeoutExpired:
+        p.terminate()
+        try:
+            p.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            p.kill()
+
+    rms = 0.0
+    have = False
+    try:
+        w = wave.open(path, "rb")
+        data = w.readframes(w.getnframes())
+        w.close()
+        if data:
+            vals = struct.unpack("<%dh" % (len(data) // 2), data)
+            # Skip the start-up ramp (a few silent frames before the stream runs).
+            vals = vals[2000:] or vals
+            rms = math.sqrt(sum(v * v for v in vals) / len(vals))
+            have = True
+    except Exception:
+        have = False
+
+    # When we could not capture anything, report null so the bar keeps its last
+    # known state instead of flapping to "off".
+    if not have:
+        print(json.dumps({"alive": None, "rms": 0.0}))
+        return 0
+
+    alive = rms < DEAD_RMS
+    print(json.dumps({"alive": alive, "rms": round(rms, 1)}))
+    return 0
+
+
+def set_mute(state):
+    s = internal_source() or default_source()
+    if not s:
+        print("auggment-mic: no microphone source", file=sys.stderr)
+        return 1
+    cmd = ["wpctl", "set-mute", str(s["id"])]
+    cmd.append("toggle" if state == "toggle" else ("1" if state == "off" else "0"))
+    subprocess.run(cmd)
+    return 0
+
+
+def main():
+    action = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if action == "status":
+        return status()
+    if action == "switch":
+        return switch()
+    if action == "probe":
+        return probe()
+    if action in ("on", "off", "toggle"):
+        return set_mute(action)
+    print("usage: auggment-mic [status|switch|probe|on|off|toggle]", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

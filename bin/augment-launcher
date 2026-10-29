@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Augment app launcher.
+#
+# Opens (or closes) hyprlauncher, the desktop's app launcher.
+#
+# hyprlauncher runs as a daemon: one process keeps the .desktop catalogue
+# cached so the launcher opens instantly. The compositor's PATH does not
+# include ~/.local/bin, so the daemon is always started with an absolute
+# path, and the toggle is only sent once the daemon is actually up.
+set -u
+
+LAUNCHER="$HOME/.local/bin/hyprlauncher"
+
+export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"
+
+if [ ! -x "$LAUNCHER" ]; then
+    echo "augment-launcher: $LAUNCHER is missing" >&2
+    exit 1
+fi
+
+if ! pgrep -x hyprlauncher >/dev/null 2>&1; then
+    # Cold start: bring the daemon up, wait for it, then open the window.
+    setsid "$LAUNCHER" --daemon >/dev/null 2>&1 &
+    for _ in $(seq 1 40); do
+        pgrep -x hyprlauncher >/dev/null 2>&1 && break
+        sleep 0.05
+    done
+    exec "$LAUNCHER"
+fi
+
+# Warm: the daemon holds the app list, so this is instant.
+exec "$LAUNCHER" --toggle

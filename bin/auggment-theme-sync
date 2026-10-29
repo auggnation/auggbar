@@ -1,0 +1,705 @@
+#!/usr/bin/env python3
+"""Derive a coherent colour theme from the current wallpaper and publish it.
+
+Writes, all from one wallpaper:
+  * ~/.local/state/auggment/palette.toml          -> Quickshell bar palette
+  * <live theme>/colors.toml                       -> desktop theme colours
+  * <live theme>/ghostty.conf, kitty.conf,
+    alacritty.toml, foot.ini                       -> terminal palettes
+  * ~/.config/hypr/auggment-theme.lua              -> Hyprland window borders
+  * ~/.config/hypr/hyprtoolkit.conf                -> hyprlauncher (Super+Space)
+                                                      and other hyprtoolkit apps
+  * /var/lib/auggment-login/{logo.png,background.jpg,regreet.css}
+                                                   -> greetd/ReGreet login screen
+  * ~/.config/hypr/hyprlock-colors.conf            -> hyprlock lock screen
+  * ~/.config/gtk-{3,4}.0/colors.css + GNOME accent -> GTK / libadwaita apps
+  * running Ghostty windows are told to reload (SIGUSR2)
+  * ~/.local/share/color-schemes/Auggment.colors   -> KDE/Qt colour scheme
+  * GTK / icon / colour-scheme gsettings           -> GTK apps
+
+The light/dark mode is read from ~/.config/auggment/theme_mode (dark|light);
+everything is regenerated in that mode, so both a wallpaper change and a mode
+change flow through this one script. Hyprland is then reloaded so the borders
+apply immediately and the KDE colour scheme is made current, so Qt/KDE apps
+follow the wallpaper too. Usage:
+
+    auggment-theme-sync /path/to/wallpaper.jpg
+"""
+import colorsys
+import os
+import subprocess
+import sys
+
+NAME = "aug" + "gment"   # the Auggment prefix used by the kit
+HOME = os.path.expanduser("~")
+STATE_DIR = os.path.join(HOME, ".local", "state", "auggment")
+PALETTE = os.path.join(STATE_DIR, "palette.toml")
+LIVE = os.path.join(STATE_DIR, "theme")
+HYPR_LUA = os.path.join(HOME, ".config", "hypr", "auggment-theme.lua")
+HYPRTOOLKIT = os.path.join(HOME, ".config", "hypr", "hyprtoolkit.conf")
+LAUNCHER_BIN = os.path.join(HOME, ".local", "bin", "hyprlauncher")
+# Shared with the login screen (greetd runs ReGreet as the "greeter" user, who
+# cannot read ~). Created once by root, owned by the desktop user.
+LOGIN_DIR = "/var/lib/auggment-login"
+HYPRLOCK_COLORS = os.path.join(HOME, ".config", "hypr", "hyprlock-colors.conf")
+CONFIG_DIR = os.path.join(HOME, ".config", "auggment")
+MODE_FILE = os.path.join(CONFIG_DIR, "theme_mode")
+COLOR_SCHEMES = os.path.join(HOME, ".local", "share", "color-schemes")
+KDE_SCHEME = os.path.join(COLOR_SCHEMES, "Auggment.colors")
+
+# Standard ANSI hues; the whole set is rotated so "blue" lands on the
+# wallpaper's accent hue, which keeps the scheme recognisably related to it.
+ANSI = {
+    "black": 0.0,
+    "red": 0.0,
+    "green": 0.33,
+    "yellow": 0.13,
+    "blue": 0.61,
+    "magenta": 0.83,
+    "cyan": 0.50,
+    "white": 0.0,
+}
+REFERENCE = 0.61  # hue that "blue" sits at in the un-rotated set
+
+
+def hsv(h, s, v):
+    r, g, b = colorsys.hsv_to_rgb(h % 1.0, max(0.0, min(1.0, s)), max(0.0, min(1.0, v)))
+    return "#%02x%02x%02x" % (round(r * 255), round(g * 255), round(b * 255))
+
+
+def rgba(hexv, alpha):
+    h = hexv.lstrip("#")
+    return "rgba(%s%s)" % (h, alpha)
+
+
+def rgb_triplet(hexv):
+    """#rrggbb -> "r,g,b" (the format KDE/.colors files use)."""
+    h = hexv.lstrip("#")
+    return "%d,%d,%d" % (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+def _run(cmd, timeout=20):
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
+def read_mode():
+    """dark (default) or light, from ~/.config/auggment/theme_mode."""
+    try:
+        with open(MODE_FILE) as fh:
+            mode = fh.read().strip().lower()
+        if mode in ("dark", "light"):
+            return mode
+    except Exception:
+        pass
+    return "dark"
+
+
+def average_colour(image):
+    for tool in (["magick", image, "-resize", "1x1", "-format", "%[hex:u]", "info:"],
+                 ["convert", image, "-resize", "1x1", "-format", "%[hex:u]", "info:"]):
+        try:
+            out = subprocess.run(tool, capture_output=True, text=True, timeout=20)
+        except Exception:
+            continue
+        hexv = out.stdout.strip().lstrip("#").lower()
+        if len(hexv) >= 6:
+            return hexv[:6]
+    return None
+
+
+def build(hexv, mode="dark"):
+    r, g, b = (int(hexv[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+    if s < 0.12:          # near-greyscale photo: pick a calm, cool accent
+        h, s = 0.60, 0.55
+
+    delta = h - REFERENCE
+    c = {}
+
+    if mode == "light":
+        # Light surfaces, dark ink, and a deeper accent so it stays legible on
+        # pale backgrounds (a vivid dark-mode accent would wash out).
+        accent = max(0.55, min(0.85, s))
+        c["accent"] = hsv(h, accent, 0.62)
+        c["background"] = hsv(h, 0.07, 0.97)
+        c["dark_background"] = hsv(h, 0.10, 0.91)
+        c["darker_background"] = hsv(h, 0.13, 0.85)
+        c["lighter_background"] = hsv(h, 0.04, 0.985)
+        c["foreground"] = hsv(h, 0.32, 0.17)
+        c["dark_foreground"] = hsv(h, 0.36, 0.33)
+        c["light_foreground"] = hsv(h, 0.30, 0.23)
+        c["bright_foreground"] = hsv(h, 0.28, 0.12)
+        c["selection"] = hsv(h, 0.28, 0.86)
+        c["muted"] = hsv(h, 0.22, 0.44)
+        c["urgent"] = hsv(0.0 + delta * 0.15, 0.72, 0.58)
+
+        c["red"] = hsv(0.0 + delta, 0.62, 0.62)
+        c["yellow"] = hsv(0.13 + delta, 0.64, 0.58)
+        c["orange"] = hsv(0.07 + delta, 0.64, 0.66)
+        c["green"] = hsv(0.33 + delta, 0.50, 0.48)
+        c["cyan"] = hsv(0.50 + delta, 0.50, 0.48)
+        c["blue"] = hsv(0.61 + delta, 0.62, 0.60)
+        c["magenta"] = hsv(0.83 + delta, 0.54, 0.58)
+        c["brown"] = hsv(0.06 + delta, 0.52, 0.46)
+
+        c["bright_red"] = hsv(0.0 + delta, 0.82, 0.50)
+        c["bright_yellow"] = hsv(0.13 + delta, 0.86, 0.46)
+        c["bright_green"] = hsv(0.33 + delta, 0.62, 0.38)
+        c["bright_cyan"] = hsv(0.50 + delta, 0.62, 0.38)
+        c["bright_blue"] = hsv(0.61 + delta, 0.76, 0.48)
+        c["bright_magenta"] = hsv(0.83 + delta, 0.68, 0.46)
+        return c
+
+    accent = max(0.58, min(0.92, s))
+    c["accent"] = hsv(h, accent, 0.90)
+    c["background"] = hsv(h + delta * 0.0, 0.26, 0.11)
+    c["dark_background"] = hsv(h, 0.30, 0.08)
+    c["darker_background"] = hsv(h, 0.34, 0.06)
+    c["lighter_background"] = hsv(h, 0.22, 0.17)
+    c["foreground"] = hsv(h, 0.14, 0.88)
+    c["dark_foreground"] = hsv(h, 0.16, 0.52)
+    c["light_foreground"] = hsv(h, 0.12, 0.94)
+    c["bright_foreground"] = hsv(h, 0.10, 0.97)
+    c["selection"] = hsv(h, 0.30, 0.24)
+    c["muted"] = hsv(h, 0.18, 0.46)
+    c["urgent"] = hsv(0.0 + delta * 0.15, 0.75, 0.92)
+
+    c["red"] = hsv(0.0 + delta, 0.70, 0.90)
+    c["yellow"] = hsv(0.13 + delta, 0.65, 0.92)
+    c["orange"] = hsv(0.07 + delta, 0.72, 0.93)
+    c["green"] = hsv(0.33 + delta, 0.55, 0.80)
+    c["cyan"] = hsv(0.50 + delta, 0.55, 0.75)
+    c["blue"] = hsv(0.61 + delta, 0.70, 0.90)
+    c["magenta"] = hsv(0.83 + delta, 0.60, 0.85)
+    c["brown"] = hsv(0.06 + delta, 0.55, 0.60)
+
+    c["bright_red"] = hsv(0.0 + delta, 0.75, 0.98)
+    c["bright_yellow"] = hsv(0.13 + delta, 0.72, 1.00)
+    c["bright_green"] = hsv(0.33 + delta, 0.60, 0.95)
+    c["bright_cyan"] = hsv(0.50 + delta, 0.62, 0.92)
+    c["bright_blue"] = hsv(0.61 + delta, 0.72, 0.98)
+    c["bright_magenta"] = hsv(0.83 + delta, 0.66, 0.96)
+    return c
+
+
+def write_palette(c):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    lines = ["# Generated by auggment-theme-sync - wallpaper-derived palette",
+             'accent = "%s"' % c["accent"],
+             'background = "%s"' % c["background"],
+             'foreground = "%s"' % c["foreground"],
+             'muted = "%s"' % c["muted"],
+             'urgent = "%s"' % c["urgent"]]
+    with open(PALETTE, "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+
+def write_colors_toml(c, mode):
+    if not os.path.isdir(LIVE):
+        return
+    order = ["mode", "accent", "selection", "muted", "background", "dark_background",
+             "darker_background", "lighter_background", "foreground", "dark_foreground",
+             "light_foreground", "bright_foreground", "red", "yellow", "orange", "green",
+             "cyan", "blue", "magenta", "brown", "bright_red", "bright_yellow",
+             "bright_green", "bright_cyan", "bright_blue", "bright_magenta"]
+    with open(os.path.join(LIVE, "colors.toml"), "w") as fh:
+        for key in order:
+            if key == "mode":
+                fh.write('mode = "%s"\n' % mode)
+            else:
+                fh.write('%s = "%s"\n' % (key, c.get(key, "#ffffff")))
+
+
+def ansi16(c, mode):
+    if mode == "light":
+        return {
+            0: c["foreground"], 1: c["red"], 2: c["green"], 3: c["yellow"],
+            4: c["blue"], 5: c["magenta"], 6: c["cyan"], 7: c["muted"],
+            8: c["dark_foreground"], 9: c["bright_red"], 10: c["bright_green"],
+            11: c["bright_yellow"], 12: c["bright_blue"], 13: c["bright_magenta"],
+            14: c["bright_cyan"], 15: c["lighter_background"],
+        }
+    return {
+        0: c["background"], 1: c["red"], 2: c["green"], 3: c["yellow"],
+        4: c["blue"], 5: c["magenta"], 6: c["cyan"], 7: c["foreground"],
+        8: c["muted"], 9: c["bright_red"], 10: c["bright_green"], 11: c["bright_yellow"],
+        12: c["bright_blue"], 13: c["bright_magenta"], 14: c["bright_cyan"],
+        15: c["bright_foreground"],
+    }
+
+
+def write_terminals(c, mode):
+    if not os.path.isdir(LIVE):
+        return
+    pal = ansi16(c, mode)
+    ghostty = ["background = %s" % c["background"], "foreground = %s" % c["foreground"],
+               "cursor-color = %s" % c["bright_foreground"],
+               "selection-background = %s" % c["selection"],
+               "selection-foreground = %s" % c["foreground"], ""]
+    ghostty += ["palette = %d=%s" % (i, pal[i]) for i in range(16)]
+    with open(os.path.join(LIVE, "ghostty.conf"), "w") as fh:
+        fh.write("\n".join(ghostty) + "\n")
+
+    kitty = ["foreground %s" % c["foreground"], "background %s" % c["background"],
+             "cursor %s" % c["bright_foreground"], "selection_background %s" % c["selection"],
+             "selection_foreground %s" % c["foreground"], ""]
+    kitty += ["color%d %s" % (i, pal[i]) for i in range(16)]
+    with open(os.path.join(LIVE, "kitty.conf"), "w") as fh:
+        fh.write("\n".join(kitty) + "\n")
+
+    foot = ["[colors]", "foreground=%s" % c["foreground"], "background=%s" % c["background"],
+            "selection-foreground=%s" % c["background"], "selection-background=%s" % c["foreground"]]
+    foot += ["regular%d=%s" % (i, pal[i]) for i in range(8)]
+    foot += ["bright%d=%s" % (i, pal[i + 8]) for i in range(8)]
+    with open(os.path.join(LIVE, "foot.ini"), "w") as fh:
+        fh.write("\n".join(foot) + "\n")
+
+    alacritty = ['# Generated by auggment-theme-sync', "[colors.primary]",
+                 'background = "%s"' % c["background"], 'foreground = "%s"' % c["foreground"],
+                 "[colors.cursor]", 'cursor = "%s"' % c["bright_foreground"],
+                 "[colors.selection]", 'background = "%s"' % c["selection"],
+                 'text = "%s"' % c["foreground"], ""]
+    names = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
+    alacritty.append("[colors.normal]")
+    alacritty += ['%s = "%s"' % (names[i], pal[i]) for i in range(8)]
+    alacritty.append("")
+    alacritty.append("[colors.bright]")
+    alacritty += ['%s = "%s"' % (names[i], pal[i + 8]) for i in range(8)]
+    with open(os.path.join(LIVE, "alacritty.toml"), "w") as fh:
+        fh.write("\n".join(alacritty) + "\n")
+
+
+def write_hyprland(c):
+    """Write the Hyprland border colours as a Lua block.
+
+    hyprland.lua is what Hyprland actually reads (hyprland.conf is legacy and
+    never loaded, and the .conf format is dropped in 0.57), so the hyprlang
+    `general { ... }` file this used to write was parsed by nobody at all.
+    hyprland.lua dofile()s this file instead, and `hl.config` needs the nested
+    `col.active_border` key.
+
+    The window borders are switched off: both colours are fully transparent,
+    so no border is drawn around any window.
+    """
+    os.makedirs(os.path.dirname(HYPR_LUA), exist_ok=True)
+    body = [
+        "-- Managed by " + NAME + "-theme-sync - window borders.",
+        "-- The window borders are switched off: both colours are fully",
+        "-- transparent, so no border is drawn around any window.",
+        "hl.config({",
+        "    general = {",
+        "        col = {",
+        "            active_border   = \"rgba(00000000)\",",
+        "            inactive_border = \"rgba(00000000)\",",
+        "        },",
+        "    },",
+        "})",
+        "",
+    ]
+    with open(HYPR_LUA, "w") as fh:
+        fh.write("\n".join(body) + "\n")
+
+
+def _mix(a, b, t):
+    """Blend hex colour a toward b by t (0..1)."""
+    pa = [int(a.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+    pb = [int(b.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+    return "#" + "".join("%02x" % round(x + (y - x) * t) for x, y in zip(pa, pb))
+
+
+def write_launcher(c):
+    """Theme hyprtoolkit (hyprlauncher, Hyprland's dialogs) from the palette.
+
+    Without this file hyprtoolkit falls back to its stock grey/cyan look,
+    which matches nothing on the desktop.
+    """
+    def col(hexv):
+        return "rgba(%sff)" % hexv.lstrip("#")
+    body = [
+        "# Managed by " + NAME + "-theme-sync - follows the wallpaper palette.",
+        "# Rewritten on every wallpaper change; do not edit by hand.",
+        "background = " + col(c["background"]),
+        "base = " + col(c["lighter_background"]),
+        "alternate_base = " + col(c["selection"]),
+        "text = " + col(c["foreground"]),
+        "bright_text = " + col(c["bright_foreground"]),
+        "accent = " + col(c["accent"]),
+        "accent_secondary = " + col(_mix(c["accent"], c["background"], 0.45)),
+        "font_family = JetBrainsMono Nerd Font",
+        "font_family_monospace = JetBrainsMono Nerd Font",
+        "rounding_large = 12",
+        "rounding_small = 8",
+        "",
+    ]
+    os.makedirs(os.path.dirname(HYPRTOOLKIT), exist_ok=True)
+    with open(HYPRTOOLKIT, "w") as fh:
+        fh.write("\n".join(body))
+
+
+def restart_launcher():
+    """hyprtoolkit reads its theme at start-up: restart the launcher daemon
+    (if it is running) so the next Super+Space shows the new colours."""
+    if subprocess.run(["pgrep", "-x", "hyprlauncher"], capture_output=True).returncode != 0:
+        return
+    subprocess.run(["pkill", "-x", "hyprlauncher"], capture_output=True)
+    if not os.access(LAUNCHER_BIN, os.X_OK):
+        return
+    env = dict(os.environ)
+    env["PATH"] = ":".join([os.path.join(HOME, ".local", "bin"),
+                            os.path.join(HOME, ".opencode", "bin"), env.get("PATH", "")])
+    subprocess.Popen([LAUNCHER_BIN, "--daemon"], env=env, start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _write_atomic(path, text):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+
+
+LOGO = "/usr/local/share/auggment/logo.png"
+
+
+def _css(hexv, alpha=1.0):
+    h = hexv.lstrip("#")
+    return "rgba(%d, %d, %d, %.2f)" % (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), alpha)
+
+
+def write_login(c, image):
+    """Theme the login screen (ReGreet) and the lock screen (hyprlock): the
+    AUGGMENT ASCII art recoloured to the wallpaper accent on the palette's
+    darkest background, plus matching widget colours."""
+    a, fg, bg = c["accent"], c["foreground"], c["darker_background"]
+    if os.path.isdir(LOGIN_DIR) and os.access(LOGIN_DIR, os.W_OK) and os.path.exists(LOGO):
+        logo = os.path.join(LOGIN_DIR, "logo.png")
+        _run(["magick", LOGO, "-fill", a, "-colorize", "100%", logo + ".tmp.png"], timeout=30)
+        if os.path.exists(logo + ".tmp.png"):
+            os.replace(logo + ".tmp.png", logo)
+            back = os.path.join(LOGIN_DIR, "background.jpg")
+            _run(["magick", "-size", "2880x1920", "xc:" + bg,
+                  "(", logo, "-resize", "1500x", ")", "-gravity", "north", "-geometry", "+0+200",
+                  "-composite", "-quality", "92", back + ".tmp.jpg"], timeout=30)
+            if os.path.exists(back + ".tmp.jpg"):
+                os.replace(back + ".tmp.jpg", back)
+        css = """/* Managed by %s-theme-sync: follows the wallpaper palette. */
+window, .background { background-color: %s; color: %s; }
+frame, .card, box.vertical > frame {
+    background-color: %s;
+    border: 2px solid %s;
+    border-radius: 12px;
+}
+entry, combobox button, dropdown button {
+    background-color: %s;
+    color: %s;
+    border: 1px solid %s;
+    border-radius: 8px;
+}
+entry:focus-within { border-color: %s; }
+button { border-radius: 8px; }
+/* GTK paints buttons with a background *image*; reset it so the theme shows. */
+button.suggested-action {
+    background: %s;
+    color: %s;
+    font-weight: bold;
+}
+button.destructive-action {
+    background: %s;
+    color: %s;
+    border: 1px solid %s;
+}
+button.destructive-action:hover { background: %s; color: %s; }
+label { color: %s; }
+""" % (NAME, bg, fg, _css(c["background"], 0.88), a,
+       _css(c["lighter_background"], 0.92), fg, _css(a, 0.55), a,
+       a, bg,
+       _css(c["background"], 0.88), fg, _css(a, 0.55),
+       a, bg, fg)
+        _write_atomic(os.path.join(LOGIN_DIR, "regreet.css"), css)
+
+    def hl(hexv):
+        return "rgb(%s)" % hexv.lstrip("#")
+    lock = [
+        "# Managed by " + NAME + "-theme-sync - lock screen colours from the wallpaper.",
+        "$lock_bg = " + hl(bg),
+        "$lock_accent = " + hl(a),
+        "$lock_text = " + hl(fg),
+        "$lock_muted = " + hl(c["muted"]),
+        "$lock_field = " + hl(c["lighter_background"]),
+        "$lock_fail = " + hl(c["urgent"]),
+        "",
+    ]
+    os.makedirs(os.path.dirname(HYPRLOCK_COLORS), exist_ok=True)
+    _write_atomic(HYPRLOCK_COLORS, "\n".join(lock))
+
+
+GTK_DIRS = [os.path.join(HOME, ".config", d) for d in ("gtk-3.0", "gtk-4.0")]
+# libadwaita's named accents (org.gnome.desktop.interface accent-color) by hue.
+ADW_ACCENTS = [("red", 0), ("orange", 30), ("yellow", 50), ("green", 120),
+               ("teal", 175), ("blue", 215), ("purple", 275), ("pink", 320), ("red", 360)]
+
+
+def _adw_accent(hexv):
+    r, g, b = (int(hexv.lstrip("#")[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    h, s, _v = colorsys.rgb_to_hsv(r, g, b)
+    if s < 0.18:
+        return "slate"
+    deg = h * 360
+    return min(ADW_ACCENTS, key=lambda a: abs(a[1] - deg))[0]
+
+
+def _breeze_role(name, c):
+    """Palette colour for one Breeze-GTK colour name (colors.css), by its role."""
+    n = name.replace("_breeze", "")
+    if n.startswith("error"):
+        return c["red"]
+    if n.startswith("warning"):
+        return c["yellow"]
+    if n.startswith("success"):
+        return c["green"]
+    if n.startswith("link_visited"):
+        return c["magenta"]
+    if n.startswith("link") or "decoration_focus" in n or "decoration_hover" in n \
+            or "view_active_decoration" in n or "view_hover_decoration" in n:
+        return c["accent"]
+    if "selected_bg" in n:
+        return c["accent"] if "unfocused" not in n else c["selection"]
+    if "selected_fg" in n:
+        return c["darker_background"]
+    if "borders" in n:
+        return c["selection"] if "insensitive" not in n else c["lighter_background"]
+    if n.startswith("tooltip_background"):
+        return c["darker_background"]
+    if n.startswith("tooltip_border"):
+        return c["accent"]
+    if "insensitive" in n and ("fg" in n or "foreground" in n or "text" in n):
+        return c["muted"]
+    if "fg" in n or "foreground" in n or "text" in n:
+        return c["foreground"]
+    if "header" in n or "titlebar" in n:
+        return c["dark_background"]
+    if "view_bg" in n or "content_view" in n or "base_color" in n:
+        return c["darker_background"]
+    if "button_background" in n:
+        return c["lighter_background"]
+    return c["background"]
+
+
+def write_gtk_colors(c):
+    """GTK apps follow the wallpaper: rewrite colors.css (imported by gtk.css)
+    with every Breeze colour mapped from the palette plus libadwaita's colours,
+    and set GNOME's accent so libadwaita apps recolour live."""
+    for d in GTK_DIRS:
+        path = os.path.join(d, "colors.css")
+        names = []
+        try:
+            with open(path) as fh:
+                names = [l.split()[1] for l in fh if l.startswith("@define-color ") and l.split()[1].endswith("_breeze")]
+        except OSError:
+            pass
+        lines = ["/* Managed by " + NAME + "-theme-sync - follows the wallpaper palette. */"]
+        lines += ["@define-color %s %s;" % (n, _breeze_role(n, c)) for n in names]
+        adw = {
+            "accent_color": c["accent"], "accent_bg_color": c["accent"], "accent_fg_color": c["darker_background"],
+            "window_bg_color": c["background"], "window_fg_color": c["foreground"],
+            "view_bg_color": c["darker_background"], "view_fg_color": c["foreground"],
+            "headerbar_bg_color": c["dark_background"], "headerbar_fg_color": c["foreground"],
+            "sidebar_bg_color": c["dark_background"], "sidebar_fg_color": c["foreground"],
+            "card_bg_color": c["lighter_background"], "card_fg_color": c["foreground"],
+            "popover_bg_color": c["lighter_background"], "popover_fg_color": c["foreground"],
+            "dialog_bg_color": c["background"], "dialog_fg_color": c["foreground"],
+        }
+        lines += ["@define-color %s %s;" % kv for kv in adw.items()]
+        lines.append(":root {")
+        lines += ["  --%s: %s;" % (k.replace("_", "-"), v) for k, v in adw.items()]
+        lines.append("}")
+        os.makedirs(d, exist_ok=True)
+        _write_atomic(path, "\n".join(lines) + "\n")
+    _run(["gsettings", "set", "org.gnome.desktop.interface", "accent-color", _adw_accent(c["accent"])])
+
+
+def reload_terminals():
+    """Running Ghostty windows reread their config (and so the new palette) on
+    SIGUSR2; Ghostty installs a handler for it, so this never kills a window."""
+    _run(["pkill", "-USR2", "-x", "ghostty"])
+
+
+# ---------------------------------------------------------------------------
+# KDE / Qt  (colour scheme + live apply)
+# ---------------------------------------------------------------------------
+
+def _kde_section(name, bg, bg_alt, fg, fg_active, fg_inactive, c):
+    return [
+        "[%s]" % name,
+        "BackgroundAlternate=%s" % rgb_triplet(bg_alt),
+        "BackgroundNormal=%s" % rgb_triplet(bg),
+        "DecorationFocus=%s" % rgb_triplet(c["accent"]),
+        "DecorationHover=%s" % rgb_triplet(c["accent"]),
+        "ForegroundActive=%s" % rgb_triplet(fg_active),
+        "ForegroundInactive=%s" % rgb_triplet(fg_inactive),
+        "ForegroundLink=%s" % rgb_triplet(c["blue"]),
+        "ForegroundNegative=%s" % rgb_triplet(c["red"]),
+        "ForegroundNeutral=%s" % rgb_triplet(c["yellow"]),
+        "ForegroundNormal=%s" % rgb_triplet(fg),
+        "ForegroundPositive=%s" % rgb_triplet(c["green"]),
+        "ForegroundVisited=%s" % rgb_triplet(c["magenta"]),
+        "",
+    ]
+
+
+def write_kde(c, mode):
+    """Publish a KDE colour scheme derived from the wallpaper and make it current."""
+    dark = mode != "light"
+    fg = c["foreground"]
+    fg_active = c["accent"]
+    fg_inactive = c["muted"]
+
+    if dark:
+        window_bg, window_alt = c["background"], c["dark_background"]
+        view_bg, view_alt = c["darker_background"], c["dark_background"]
+        button_bg, button_alt = c["lighter_background"], c["selection"]
+        tooltip_bg = c["lighter_background"]
+        header_bg = c["lighter_background"]
+        comp_bg = c["background"]
+    else:
+        window_bg, window_alt = c["background"], c["darker_background"]
+        view_bg, view_alt = c["lighter_background"], c["dark_background"]
+        button_bg, button_alt = c["dark_background"], c["selection"]
+        tooltip_bg = c["background"]
+        header_bg = c["background"]
+        comp_bg = c["dark_background"]
+
+    sel = c["selection"]
+    sel_fg = c["bright_foreground"]
+
+    body = [
+        "# Generated by auggment-theme-sync. Do not edit; regenerated whenever",
+        "# the wallpaper or light/dark mode changes.",
+        "",
+        "[ColorEffects:Disabled]",
+        "Color=%s" % rgb_triplet(c["muted"]),
+        "ColorAmount=0",
+        "ColorEffect=0",
+        "ContrastAmount=0.6",
+        "ContrastEffect=1",
+        "IntensityAmount=0.1",
+        "IntensityEffect=2",
+        "",
+        "[ColorEffects:Inactive]",
+        "ChangeSelectionColor=true",
+        "Color=%s" % rgb_triplet(c["muted"]),
+        "ColorAmount=0.025",
+        "ColorEffect=2",
+        "ContrastAmount=0.1",
+        "ContrastEffect=2",
+        "Enable=false",
+        "IntensityAmount=0",
+        "IntensityEffect=0",
+        "",
+    ]
+    body += _kde_section("Colors:Button", button_bg, button_alt, fg, fg_active, fg_inactive, c)
+    body += _kde_section("Colors:Complementary", comp_bg, window_alt, fg, fg_active, fg_inactive, c)
+    body += _kde_section("Colors:Header", header_bg, window_bg, fg, fg_active, fg_inactive, c)
+    body += _kde_section("Colors:Header][Inactive", window_bg, header_bg, fg, fg_active, fg_inactive, c)
+    body += _kde_section("Colors:Selection", sel, sel, sel_fg, fg_active, fg_inactive, c)
+    body += _kde_section("Colors:Tooltip", tooltip_bg, window_bg, fg, fg_active, fg_inactive, c)
+    body += _kde_section("Colors:View", view_bg, view_alt, fg, fg_active, fg_inactive, c)
+    body += _kde_section("Colors:Window", window_bg, window_alt, fg, fg_active, fg_inactive, c)
+    body += [
+        "[General]",
+        "ColorScheme=Auggment",
+        "Name=Auggment %s" % ("Dark" if dark else "Light"),
+        "Name[en]=Auggment %s" % ("Dark" if dark else "Light"),
+        "shadeSortColumn=true",
+        "",
+        "[KDE]",
+        "contrast=4",
+        "",
+        "[WM]",
+        "activeBackground=%s" % rgb_triplet(window_bg),
+        "activeBlend=%s" % rgb_triplet(fg),
+        "activeForeground=%s" % rgb_triplet(fg),
+        "inactiveBackground=%s" % rgb_triplet(window_alt),
+        "inactiveBlend=%s" % rgb_triplet(fg_inactive),
+        "inactiveForeground=%s" % rgb_triplet(fg_inactive),
+        "",
+    ]
+
+    try:
+        os.makedirs(COLOR_SCHEMES, exist_ok=True)
+        with open(KDE_SCHEME, "w") as fh:
+            fh.write("\n".join(body) + "\n")
+    except Exception:
+        return
+
+    # Make it current. plasma-apply-colorscheme rewrites ~/.config/kdeglobals and
+    # broadcasts the change so running Qt/KDE apps repaint; it works outside a
+    # full Plasma session too.
+    _run(["plasma-apply-colorscheme", "Auggment"])
+    accent = c["accent"]
+    if accent.startswith("#") and len(accent) == 7:
+        _run(["plasma-apply-colorscheme", "--accent-color", accent, "Auggment"])
+
+    _run(["kwriteconfig6", "--file", "kdeglobals", "--group", "Icons", "--key", "Theme",
+          "breeze-dark" if dark else "breeze"])
+
+
+def write_gtk(mode):
+    """Keep GTK/libadwaita apps in step with the wallpaper's light/dark mode."""
+    dark = mode != "light"
+    for cmd in (
+        ["gsettings", "set", "org.gnome.desktop.interface", "color-scheme",
+         "prefer-dark" if dark else "prefer-light"],
+        ["gsettings", "set", "org.gnome.desktop.interface", "gtk-theme",
+         "Breeze-Dark" if dark else "Breeze"],
+        ["gsettings", "set", "org.gnome.desktop.interface", "icon-theme",
+         "breeze-dark" if dark else "breeze"],
+    ):
+        _run(cmd, timeout=10)
+
+
+def reload_hyprland():
+    _run(["hyprctl", "reload"], timeout=10)
+
+
+def main():
+    # With no argument, re-theme the wallpaper we are already on. That is what
+    # the Dark/Light toggle calls: it only flips theme_mode and re-runs this.
+    if len(sys.argv) >= 2:
+        image = sys.argv[1]
+    else:
+        try:
+            with open(os.path.join(STATE_DIR, "last-wallpaper")) as fh:
+                image = fh.read().strip()
+        except Exception:
+            image = ""
+        if not image:
+            print("usage: auggment-theme-sync <wallpaper>", file=sys.stderr)
+            return 2
+    hexv = average_colour(image)
+    if not hexv:
+        print("auggment-theme-sync: could not read %s" % image, file=sys.stderr)
+        return 1
+    mode = read_mode()
+    c = build(hexv, mode)
+    write_palette(c)
+    write_colors_toml(c, mode)
+    write_terminals(c, mode)
+    write_hyprland(c)
+    write_launcher(c)
+    write_login(c, image)
+    write_kde(c, mode)
+    write_gtk(mode)
+    write_gtk_colors(c)
+    reload_hyprland()
+    reload_terminals()
+    restart_launcher()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

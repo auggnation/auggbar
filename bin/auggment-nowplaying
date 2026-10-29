@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# auggment-nowplaying — MPRIS bridge for the Quickshell bar.
+#
+#   status     -> JSON {"active":bool,"playing":bool,"artist":str,"title":str,"player":str}
+#   playpause  -> toggle play/pause
+#   next       -> next track
+#   prev       -> previous track
+#
+# Prefers the Apple Music desktop app (a castlabs-Electron build). That app does
+# not register its own MPRIS name, so its media session shows up under Chromium's
+# bus name "chromium.instance<PID>". We resolve <PID> from the app's main process.
+# If the app is not running we fall back to the first available MPRIS player.
+set -uo pipefail
+
+app_pid() {
+  local pid
+  for pid in $(pgrep -x apple-music 2>/dev/null); do
+    if ! tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q -- '--type='; then
+      printf '%s' "$pid"
+      return 0
+    fi
+  done
+  return 1
+}
+
+player() {
+  local pid cand m
+  pid=$(app_pid || true)
+  if [ -n "${pid:-}" ]; then
+    cand="chromium.instance${pid}"
+    if playerctl -l 2>/dev/null | grep -qx "$cand"; then printf '%s' "$cand"; return 0; fi
+    m=$(playerctl -l 2>/dev/null | grep -i -m1 'apple' || true)
+    if [ -n "${m:-}" ]; then printf '%s' "$m"; return 0; fi
+  fi
+  playerctl -l 2>/dev/null | head -1
+}
+
+P=$(player)
+
+case "${1:-status}" in
+  status)
+    if [ -z "${P:-}" ]; then printf '{"active":false}'; exit 0; fi
+    meta=$(playerctl -p "$P" metadata --format '{{status}}	{{artist}}	{{title}}' 2>/dev/null) || meta=""
+    if [ -z "$meta" ]; then printf '{"active":false}'; exit 0; fi
+    IFS=$'\t' read -r st art title <<<"$meta"
+    jq -cn --arg p "$P" --arg s "$st" --arg a "$art" --arg t "$title" \
+      '{active:true, player:$p, playing:($s=="Playing"), artist:$a, title:$t}'
+    ;;
+  playpause) [ -n "${P:-}" ] && playerctl -p "$P" play-pause ;;
+  next)      [ -n "${P:-}" ] && playerctl -p "$P" next ;;
+  prev)      [ -n "${P:-}" ] && playerctl -p "$P" previous ;;
+  *) echo "usage: auggment-nowplaying [status|playpause|next|prev]" >&2; exit 2 ;;
+esac

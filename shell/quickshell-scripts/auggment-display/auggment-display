@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+"""Command-line front-end for the Auggment Display Waybar port.
+
+Manages per-monitor settings on CachyOS/Hyprland by writing a single managed
+hl.monitor({ ... }) block to ~/.config/hypr/auggment-monitors.lua, which
+hyprland.lua dofile()s on reload, then reloading Hyprland.  Changes apply
+immediately and revert after 15s unless kept, mirroring the original plugin's
+safety flow.
+
+    auggment-display bar                     Waybar module JSON
+    auggment-display menu                    open the settings menu
+    auggment-display state                   JSON: monitors + selected + pending
+    auggment-display select NAME
+    auggment-display change '{"hz":60}'      patch the selected monitor
+    auggment-display change --monitor NAME '{"position":"0x0"}'
+                                             patch NAME regardless of selection
+    auggment-display keep | revert | forget
+    auggment-display revert-unless-kept      (internal: revert timer)
+    auggment-display brightness get --monitor NAME
+    auggment-display brightness set 70 --monitor NAME
+    auggment-display toggle                  alias for menu
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import display_lib as lib  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# Managed config
+# ---------------------------------------------------------------------------
+
+def _ensure_source():
+    """Hyprland 0.57+ Lua config dofile()s the managed file; nothing to append."""
+    return
+
+
+def _write_managed(settings_list):
+    os.makedirs(lib.HYPR_DIR, exist_ok=True)
+    _ensure_source()
+    body = [lib.BEGIN]
+    for s in settings_list:
+        body.append(lib.monitor_block(s))
+    body.append(lib.END)
+    with open(lib.MANAGED_CONF, "w") as fh:
+        fh.write("\n".join(body) + "\n")
+
+
+def _reload():
+    try:
+        subprocess.run(["hyprctl", "reload"], capture_output=True, timeout=10)
+    except Exception:
+        pass
+
+
+def _selected_display(displays):
+    name = lib.get_selected()
+    for d in displays:
+        if d["name"] == name:
+            return d
+    for d in displays:
+        if d["focused"]:
+            return d
+    return displays[0] if displays else None
+
+
+def _all_settings(displays, pending, stage="after"):
+    """Monitor settings for the managed file.
+
+    stage="after" applies a pending change; stage="before" restores what was
+    there before it (used by revert, which previously re-applied "after" and so
+    could never undo anything).
+    """
+    out = []
+    for d in displays:
+        if d["name"] in pending:
+            out.append(pending[d["name"]][stage])
+        else:
+            out.append(lib.settings_from_display(d))
+    return out
+
+
+def _spawn_revert_timer():
+    try:
+        subprocess.Popen(
+            ["bash", "-c", "sleep %d; %s revert-unless-kept" % (lib.REVERT_SECONDS, os.path.abspath(sys.argv[0]))],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def cmd_state():
+    displays = lib.read_monitors()
+    selected = _selected_display(displays)
+    print(json.dumps({
+        "selected": selected["name"] if selected else "",
+        "pending": lib.read_pending(),
+        "displays": displays,
+    }, indent=2))
+
+
+def cmd_select(name):
+    lib.set_selected(name)
+
+
+def cmd_change(patch_json, monitor=None):
+    patch = json.loads(patch_json) if isinstance(patch_json, str) else patch_json
+    displays = lib.read_monitors()
+    if monitor:
+        selected = next((d for d in displays if d["name"] == monitor), None)
+    else:
+        selected = _selected_display(displays)
+    if not selected:
+        return
+    name = selected["name"]
+    lib.set_selected(name)
+    pending = lib.read_pending()
+    existing = pending.get(name)
+    before = existing["before"] if existing else lib.settings_from_display(selected)
+    after = dict(existing["after"] if existing else lib.settings_from_display(selected))
+    after.update(patch)
+    after["scale"] = lib.clean_scale(after.get("scale"), after.get("width"), after.get("height")) or after.get("scale")
+    pending[name] = {"before": before, "after": after, "deadline": time.time() + lib.REVERT_SECONDS}
+    lib.write_pending(pending)
+    _write_managed(_all_settings(displays, pending))
+    _reload()
+    _spawn_revert_timer()
+
+
+def cmd_keep():
+    lib.write_pending({})
+
+
+def cmd_revert():
+    displays = lib.read_monitors()
+    pending = lib.read_pending()
+    if pending:
+        _write_managed(_all_settings(displays, pending, stage="before"))
+    lib.write_pending({})
+    _reload()
+
+
+def cmd_revert_unless_kept():
+    pending = lib.read_pending()
+    if not pending:
+        return
+    deadline = max((p.get("deadline", 0) for p in pending.values()), default=0)
+    if time.time() >= deadline:
+        cmd_revert()
+
+
+def cmd_forget():
+    lib.write_pending({})
+    if os.path.exists(lib.MANAGED_CONF):
+        with open(lib.MANAGED_CONF, "w") as fh:
+            fh.write("-- auggment-display: no saved layout\n")
+    _reload()
+
+
+def cmd_sync():
+    """Write the managed block from the current live layout (no changes)."""
+    displays = lib.read_monitors()
+    _write_managed([lib.settings_from_display(d) for d in displays])
+    _reload()
+
+
+def cmd_toggle_enabled(name):
+    displays = lib.read_monitors()
+    target = next((d for d in displays if d["name"] == name), None)
+    if not target:
+        return
+    enabled_count = sum(1 for d in displays if d["enabled"])
+    if target["enabled"] and enabled_count <= 1:
+        return
+    lib.set_selected(name)
+    cmd_change({"disabled": target["enabled"]})
+
+
+# ---------------------------------------------------------------------------
+# Bar module
+# ---------------------------------------------------------------------------
+
+def cmd_bar():
+    displays = lib.read_monitors()
+    active = [d for d in displays if d["enabled"]]
+    icon = "\U000F0D7A" if len(displays) > 1 else "\U000F0D79"  # nf-md-monitor-multiple / monitor
+    focused = next((d for d in displays if d["focused"]), active[0] if active else None)
+    if focused:
+        if len(displays) > 1:
+            text = "%s %s  %d×%d @%.0f  %s" % (icon, focused["name"], focused["width"], focused["height"], focused["hz"], "on" if focused["enabled"] else "off")
+        else:
+            text = "%d×%d @%.0f  %s" % (focused["width"], focused["height"], focused["hz"], "on" if focused["enabled"] else "off")
+    else:
+        text = icon
+    tip_lines = []
+    for d in displays:
+        state = "on" if d["enabled"] else "off"
+        tip_lines.append("%s — %s · %d×%d@%.0f · %sx · %s" % (
+            d["model"], d["name"], d["width"], d["height"], d["hz"], d["scale"], state))
+    print(json.dumps({
+        "text": text,
+        "tooltip": "\n".join(tip_lines) or "No displays",
+        "class": "display",
+        "alt": "display",
+    }))
+
+
+def cmd_menu():
+    os.execv(sys.executable, [sys.executable, os.path.join(HERE, "display-menu.py")])
+
+
+# ---------------------------------------------------------------------------
+# Brightness
+# ---------------------------------------------------------------------------
+
+def _ddc_display_number(name):
+    try:
+        out = subprocess.run(["ddcutil", "detect"], capture_output=True, text=True, timeout=15).stdout
+    except Exception:
+        return None
+    current = None
+    for line in out.splitlines():
+        if line.startswith("Display "):
+            current = line.split()[1]
+        elif "DRM connector" in line and current:
+            connector = line.rsplit("-", 1)[-1].strip()
+            if connector == name:
+                return current
+    return None
+
+
+def _brightness_get(monitor):
+    internal = lib.is_internal(monitor)
+    if internal and shutil.which("brightnessctl"):
+        try:
+            out = subprocess.run(["brightnessctl", "-m"], capture_output=True, text=True, timeout=5).stdout.strip()
+            field = out.split(",")[3]
+            return int(field.rstrip("%"))
+        except Exception:
+            pass
+    if shutil.which("ddcutil"):
+        num = _ddc_display_number(monitor)
+        if num:
+            try:
+                out = subprocess.run(["ddcutil", "--display", num, "getvcp", "10", "--terse"],
+                                     capture_output=True, text=True, timeout=20).stdout
+                parts = out.split()
+                cur, mx = int(parts[3]), int(parts[4])
+                return round(cur * 100.0 / mx) if mx else None
+            except Exception:
+                pass
+    if shutil.which("brightnessctl") and not internal:
+        try:
+            out = subprocess.run(["brightnessctl", "-m"], capture_output=True, text=True, timeout=5).stdout.strip()
+            return int(out.split(",")[3].rstrip("%"))
+        except Exception:
+            pass
+    return None
+
+
+def _brightness_set(monitor, percent):
+    percent = max(1, min(100, int(percent)))
+    internal = lib.is_internal(monitor)
+    if internal and shutil.which("brightnessctl"):
+        subprocess.run(["brightnessctl", "set", "%d%%" % percent], capture_output=True)
+        return True
+    if shutil.which("ddcutil"):
+        num = _ddc_display_number(monitor)
+        if num:
+            subprocess.run(["ddcutil", "--display", num, "setvcp", "10", str(percent)], capture_output=True)
+            return True
+    if shutil.which("brightnessctl"):
+        subprocess.run(["brightnessctl", "set", "%d%%" % percent], capture_output=True)
+        return True
+    return False
+
+
+def cmd_brightness_step(delta):
+    displays = lib.read_monitors()
+    selected = _selected_display(displays)
+    if not selected:
+        return
+    current = _brightness_get(selected["name"])
+    if current is None:
+        current = 50
+    _brightness_set(selected["name"], current + delta)
+
+
+def main():
+    args = sys.argv[1:]
+    cmd = args[0] if args else "menu"
+    if cmd == "bar":
+        cmd_bar()
+    elif cmd in ("menu", "toggle"):
+        cmd_menu()
+    elif cmd == "state":
+        cmd_state()
+    elif cmd == "select" and len(args) > 1:
+        cmd_select(args[1])
+    elif cmd == "change" and len(args) > 1:
+        monitor = ""
+        if "--monitor" in args:
+            idx = args.index("--monitor")
+            if idx + 1 < len(args):
+                monitor = args[idx + 1]
+        rest = [a for a in args[1:] if a != "--monitor" and a != monitor]
+        if rest:
+            cmd_change(rest[0], monitor=monitor)
+    elif cmd == "keep":
+        cmd_keep()
+    elif cmd == "revert":
+        cmd_revert()
+    elif cmd == "revert-unless-kept":
+        cmd_revert_unless_kept()
+    elif cmd == "forget":
+        cmd_forget()
+    elif cmd == "sync":
+        cmd_sync()
+    elif cmd == "brightness":
+        monitor = ""
+        if "--monitor" in args:
+            monitor = args[args.index("--monitor") + 1]
+        if len(args) > 1 and args[1] == "get":
+            value = _brightness_get(monitor)
+            print(value if value is not None else "")
+        elif len(args) > 1 and args[1] == "set" and len(args) > 2:
+            _brightness_set(monitor, args[2])
+    elif cmd == "brightness-up":
+        cmd_brightness_step(5)
+    elif cmd == "brightness-down":
+        cmd_brightness_step(-5)
+    else:
+        print(__doc__)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

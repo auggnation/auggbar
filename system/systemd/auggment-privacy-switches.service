@@ -1,0 +1,11 @@
+[Unit]
+Description=AUGGMENT privacy switches (publish Framework mic/camera switch state)
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/auggment-privacy-switches
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

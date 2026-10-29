@@ -1,0 +1,75 @@
+#!/bin/bash
+# auggment-privacy-switches - publish the Framework mic/camera privacy switches.
+#
+# Mic: the embedded controller exposes the switch as GPIO line "EC:mic_sw"
+#      (0 = mic live, 1 = privacy on). Read every second.
+# Camera: on the Framework 13 Pro (2nd-gen webcam) the switch does not touch
+#      any EC line or the USB connection; the webcam reports it through its
+#      read-only UVC "privacy" control (1 = privacy on). That value only
+#      refreshes while the camera is streaming, so it is read whenever some
+#      program has the camera open (a call, the browser, or the bar's
+#      one-second check, auggment-camera-probe) and the last reading is kept.
+#      Until the first reading cam_on is null (unknown).
+#
+# Output, only rewritten when something changes:
+#   /run/auggment/privacy.json  {"mic_on": true, "cam_on": null, "cam_in_use": false}
+# cam_in_use is true while any program has the camera open.
+set -u
+
+OUT_DIR=/run/auggment
+OUT="$OUT_DIR/privacy.json"
+mkdir -p "$OUT_DIR"
+chmod 755 "$OUT_DIR"
+
+# Find "<chip> <offset>" for an EC line by name (stable across kernels).
+locate_ec() {
+    local want="EC:$1" chip line
+    for chip in /dev/gpiochip*; do
+        line=$(gpioinfo -c "$chip" 2>/dev/null | awk -v w="\"$want\"" '$3 == w { sub(":", "", $2); print $2; exit }')
+        [ -n "$line" ] && { echo "$chip $line"; return 0; }
+    done
+    return 1
+}
+
+# The webcam's capture node (the one with the privacy control).
+locate_camera() {
+    local d
+    for d in /dev/video*; do
+        v4l2-ctl -d "$d" --get-ctrl privacy >/dev/null 2>&1 && { echo "$d"; return 0; }
+    done
+    return 1
+}
+
+mic_line=$(locate_ec mic_sw) || mic_line=""
+cam_dev=$(locate_camera) || cam_dev=""
+echo "mic switch: ${mic_line:-not found}; camera: ${cam_dev:-not found}"
+
+mic_state() {
+    [ -z "$mic_line" ] && { echo null; return; }
+    # The EC driver cannot switch line direction, so read the line --as-is.
+    case "$(gpioget -c ${mic_line% *} --as-is --numeric ${mic_line#* } 2>/dev/null)" in
+        0) echo true ;; 1) echo false ;; *) echo null ;;
+    esac
+}
+
+# True while any program has the camera open or mapped (fuser, from psmisc).
+camera_in_use() { fuser -s "$cam_dev" 2>/dev/null; }
+
+cam=null
+last=""
+while true; do
+    in_use=false
+    if [ -n "$cam_dev" ] && camera_in_use; then
+        in_use=true
+        case "$(v4l2-ctl -d "$cam_dev" --get-ctrl privacy 2>/dev/null | awk '{print $NF}')" in
+            0) cam=true ;; 1) cam=false ;;
+        esac
+    fi
+    now="{\"mic_on\": $(mic_state), \"cam_on\": $cam, \"cam_in_use\": $in_use}"
+    if [ "$now" != "$last" ]; then
+        printf '%s\n' "$now" > "$OUT.tmp" && chmod 644 "$OUT.tmp" && mv "$OUT.tmp" "$OUT"
+        echo "switches: $now"
+        last=$now
+    fi
+    sleep 1
+done

@@ -1,0 +1,13 @@
+[Unit]
+Description=AUGGMENT Wi-Fi watchdog (toggle Wi-Fi when connected but offline, max once per hour)
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/auggment-wifi-watchdog
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

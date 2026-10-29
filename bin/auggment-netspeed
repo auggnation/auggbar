@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""auggment-netspeed — instantaneous throughput of the default-route interface.
+
+Prints "<down_bytes_per_second> <up_bytes_per_second> <iface>" once, using a
+small state file to diff against the previous sample. Handles both wired and
+wireless automatically by following the default route.
+
+Usage: auggment-netspeed
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+
+STATE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "auggment-netspeed.json")
+
+
+def default_iface():
+    try:
+        out = subprocess.run(["ip", "route", "show", "default"],
+                             capture_output=True, text=True, timeout=2).stdout
+        for line in out.splitlines():
+            parts = line.split()
+            if "dev" in parts:
+                return parts[parts.index("dev") + 1]
+    except Exception:
+        pass
+    # Fall back to the first non-loopback interface that is up.
+    try:
+        for name in sorted(os.listdir("/sys/class/net")):
+            if name == "lo":
+                continue
+            try:
+                state = open("/sys/class/net/%s/operstate" % name).read().strip()
+            except OSError:
+                continue
+            if state == "up":
+                return name
+    except OSError:
+        pass
+    return None
+
+
+def counters(iface):
+    try:
+        rx = int(open("/sys/class/net/%s/statistics/rx_bytes" % iface).read())
+        tx = int(open("/sys/class/net/%s/statistics/tx_bytes" % iface).read())
+        return rx, tx
+    except OSError:
+        return None
+
+
+def main():
+    iface = default_iface()
+    now = time.time()
+    cur = counters(iface) if iface else None
+
+    prev = None
+    try:
+        st = json.load(open(STATE))
+        if st.get("iface") == iface:
+            prev = (st["rx"], st["tx"], st["t"])
+    except Exception:
+        pass
+
+    down = up = 0.0
+    if cur and prev:
+        dt = now - prev[2]
+        if dt > 0:
+            down = max(0.0, (cur[0] - prev[0]) / dt)
+            up = max(0.0, (cur[1] - prev[1]) / dt)
+
+    if cur:
+        try:
+            json.dump({"iface": iface, "rx": cur[0], "tx": cur[1], "t": now}, open(STATE, "w"))
+        except OSError:
+            pass
+
+    print("%d %d %s" % (int(down), int(up), iface or "-"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

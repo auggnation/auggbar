@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""auggment-easyeffects — list and select EasyEffects output presets.
+
+Emits the currently loaded output preset and every available preset so the bar
+can offer them inline.
+
+Usage: auggment-easyeffects [status|list|load <name>]
+
+IMPORTANT: the EasyEffects CLI has no "talk to a running instance" mode of its
+own.  Running `easyeffects -a output` (or `-l <preset>`) while no instance is
+alive *starts a second one*, and that second instance grabs the PipeWire sink
+and rebuilds the filter chain.  Chromium/Thorium loses its audio stream in the
+process and pauses whatever it was playing.  So every CLI call below is
+guarded by a check that an instance is already running; otherwise we fall back
+to the stored state on disk and, for `load`, bring the service up first.
+"""
+
+import glob
+import json
+import os
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+USER_OUT = os.path.join(HOME, ".local/share/easyeffects/output")
+RC = os.path.join(HOME, ".config/easyeffects/db/easyeffectsrc")
+UNIT = "easyeffects.service"
+
+# "Breeze" is not a QML module on this system (the style is "org.kde.breeze");
+# asking for it aborts EasyEffects.  Keep the CLI in sync with the unit.
+EE_ENV = dict(os.environ)
+EE_ENV["QT_QUICK_CONTROLS_STYLE"] = "org.kde.breeze"
+
+
+def presets():
+    names = set()
+    for d in (USER_OUT,):
+        for f in glob.glob(os.path.join(d, "*.json")):
+            names.add(os.path.splitext(os.path.basename(f))[0])
+    return sorted(names, key=str.lower)
+
+
+def current_from_rc():
+    try:
+        with open(RC) as fh:
+            section = ""
+            for line in fh:
+                line = line.strip()
+                if line.startswith("["):
+                    section = line
+                elif section == "[Presets]" and line.startswith("lastLoadedOutputPreset="):
+                    return line.split("=", 1)[1]
+    except OSError:
+        pass
+    return ""
+
+
+# An instance only answers CLI calls once it has finished starting up. A call
+# made in that window (the bar polls this at login, right as the service
+# starts) becomes a second, *windowed* EasyEffects. So a process younger than
+# this does not count as running yet.
+SETTLE_SECONDS = 5
+
+
+def running_pid():
+    """PID of a live, settled EasyEffects instance, or None."""
+    try:
+        out = subprocess.run(["pgrep", "-x", "easyeffects"],
+                             capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for pid in (ln.strip() for ln in out.stdout.splitlines() if ln.strip()):
+        try:
+            age = int(subprocess.run(["ps", "-o", "etimes=", "-p", pid],
+                                     capture_output=True, text=True, timeout=5).stdout.strip() or 0)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            continue
+        if age >= SETTLE_SECONDS:
+            return pid
+    return None
+
+
+def start_service():
+    """Bring the headless EasyEffects service up and wait for it to be alive."""
+    try:
+        subprocess.run(["systemctl", "--user", "restart", UNIT],
+                       capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    for _ in range(40):
+        pid = running_pid()
+        if pid:
+            return pid
+        time.sleep(0.5)
+    return None
+
+
+def current():
+    # A running instance is authoritative; ask it over D-Bus.  Only safe to
+    # call the CLI while one is alive - see the module docstring.
+    if running_pid():
+        try:
+            out = subprocess.run(["easyeffects", "-w", "-a", "output"],
+                                 capture_output=True, text=True, timeout=10,
+                                 env=EE_ENV).stdout.strip()
+            if out:
+                return out
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return current_from_rc()
+
+
+def load(name):
+    """Load a preset.  Returns (ok, message)."""
+    if not running_pid():
+        pid = start_service()
+        if not pid:
+            return False, "easyeffects is not running (could not start %s)" % UNIT
+    try:
+        subprocess.run(["easyeffects", "-w", "-l", name],
+                       capture_output=True, text=True, timeout=20, env=EE_ENV)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)
+    # The request is handed to the running instance; give it a moment to apply.
+    time.sleep(1.0)
+    return True, ""
+
+
+def main():
+    action = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if action == "status":
+        print(json.dumps({"current": current(), "presets": presets(),
+                          "running": running_pid() is not None}))
+        return 0
+    if action == "list":
+        for n in presets():
+            print(n)
+        return 0
+    if action == "load" and len(sys.argv) > 2:
+        ok, msg = load(sys.argv[2])
+        if not ok:
+            print(msg, file=sys.stderr)
+            return 1
+        return 0
+    print("usage: auggment-easyeffects [status|list|load <name>]", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

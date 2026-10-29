@@ -1,0 +1,77 @@
+#!/bin/bash
+# auggment-wifi-watchdog - recover a Wi-Fi link that is up but passing no traffic.
+#
+# The MT7925 can stay associated to the router while traffic silently stops;
+# toggling Wi-Fi off and on is what clears it. This does that automatically:
+#
+#   * only while wlan0 is associated to an access point (connected to a router)
+#   * internet = either 1.1.1.1 or 9.9.9.9 answers a ping sent over wlan0
+#   * after FAIL_SECONDS without internet: Wi-Fi off, wait, Wi-Fi on
+#   * at most once per COOLDOWN_SECONDS (the time of the last reset is kept in
+#     STATE, so restarting the service does not reset the limit)
+#
+# Runs as root from auggment-wifi-watchdog.service; logs to the journal.
+set -u
+
+IFACE="${IFACE:-wlan0}"
+FAIL_SECONDS="${FAIL_SECONDS:-30}"
+COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-3600}"
+INTERVAL=5
+TARGETS=(1.1.1.1 9.9.9.9)
+STATE=/var/lib/auggment-wifi-watchdog/last-reset
+
+mkdir -p "$(dirname "$STATE")"
+
+log() { echo "$*"; }
+
+associated() {
+    # Connected to a router: the interface is associated to an AP and
+    # NetworkManager has it fully up.
+    iw dev "$IFACE" link 2>/dev/null | grep -q '^Connected to' &&
+        [ "$(nmcli -g GENERAL.STATE device show "$IFACE" 2>/dev/null | cut -d' ' -f1)" = "100" ]
+}
+
+online() {
+    local t
+    for t in "${TARGETS[@]}"; do
+        ping -n -q -c1 -W2 -I "$IFACE" "$t" >/dev/null 2>&1 && return 0
+    done
+    return 1
+}
+
+last_reset() { cat "$STATE" 2>/dev/null || echo 0; }
+
+fail_since=0
+log "watching $IFACE: reset after ${FAIL_SECONDS}s offline, at most once per ${COOLDOWN_SECONDS}s"
+
+while true; do
+    now=$(date +%s)
+    if ! associated; then
+        # Not on a router (Wi-Fi off, out of range, connecting): nothing to fix.
+        fail_since=0
+    elif online; then
+        if [ "$fail_since" -ne 0 ]; then
+            log "internet back after $((now - fail_since))s"
+        fi
+        fail_since=0
+    else
+        [ "$fail_since" -eq 0 ] && { fail_since=$now; log "connected to router but no internet; watching"; }
+        down=$((now - fail_since))
+        if [ "$down" -ge "$FAIL_SECONDS" ]; then
+            since_reset=$((now - $(last_reset)))
+            if [ "$since_reset" -ge "$COOLDOWN_SECONDS" ]; then
+                log "no internet for ${down}s: turning Wi-Fi off and back on"
+                echo "$now" > "$STATE"
+                nmcli radio wifi off
+                sleep 5
+                nmcli radio wifi on
+                fail_since=0
+                sleep 20   # give it time to reassociate before judging again
+                continue
+            elif [ $((down % 300)) -lt "$INTERVAL" ]; then
+                log "still no internet (${down}s); already reset $((since_reset / 60)) min ago, next reset allowed in $(((COOLDOWN_SECONDS - since_reset) / 60)) min"
+            fi
+        fi
+    fi
+    sleep "$INTERVAL"
+done

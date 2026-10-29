@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# auggment-bar-restart — restart the Quickshell bar cleanly.
+#
+# Kills the running bar (the `qs` process) and relaunches it detached with the
+# same config path used by the Hyprland `exec-once` line:
+#   exec-once = /usr/bin/qs -p /home/auggie/.config/quickshell &
+#
+# Matching is done by exact process name (pkill -x) so this script's own command
+# line can never be matched by the pattern.
+set -uo pipefail
+
+CFG="${QUICKSHELL_CONFIG:-$HOME/.config/quickshell}"
+LOG="$HOME/.cache/auggment-qs.log"
+mkdir -p "$(dirname "$LOG")"
+
+pkill -x qs 2>/dev/null
+pkill -x quickshell 2>/dev/null
+
+for _ in $(seq 1 50); do
+  pgrep -x qs >/dev/null 2>&1 || break
+  sleep 0.1
+done
+pkill -9 -x qs 2>/dev/null
+sleep 0.2
+
+setsid /usr/bin/qs -p "$CFG" >"$LOG" 2>&1 </dev/null &
