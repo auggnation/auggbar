@@ -39,6 +39,21 @@ online() {
     return 1
 }
 
+# Context for the log: does the router itself answer, and how strong is the link?
+# "router up" during an outage means the problem is past the router (the
+# network's internet); "router DOWN" means this laptop's Wi-Fi link stalled.
+diag() {
+    local gw ssid sig
+    gw=$(ip route show default dev "$IFACE" 2>/dev/null | awk '{print $3; exit}')
+    ssid=$(iw dev "$IFACE" link 2>/dev/null | awk -F': ' '/SSID/ {print $2}')
+    sig=$(iw dev "$IFACE" link 2>/dev/null | awk '/signal/ {print $2" dBm"}')
+    if [ -n "$gw" ] && ping -n -q -c1 -W1 -I "$IFACE" "$gw" >/dev/null 2>&1; then
+        echo "router $gw up, ssid ${ssid:-?}, signal ${sig:-?}"
+    else
+        echo "router ${gw:-?} DOWN, ssid ${ssid:-?}, signal ${sig:-?}"
+    fi
+}
+
 last_reset() { cat "$STATE" 2>/dev/null || echo 0; }
 
 fail_since=0
@@ -55,12 +70,12 @@ while true; do
         fi
         fail_since=0
     else
-        [ "$fail_since" -eq 0 ] && { fail_since=$now; log "connected to router but no internet; watching"; }
+        [ "$fail_since" -eq 0 ] && { fail_since=$now; log "connected to router but no internet ($(diag)); watching"; }
         down=$((now - fail_since))
         if [ "$down" -ge "$FAIL_SECONDS" ]; then
             since_reset=$((now - $(last_reset)))
             if [ "$since_reset" -ge "$COOLDOWN_SECONDS" ]; then
-                log "no internet for ${down}s: turning Wi-Fi off and back on"
+                log "no internet for ${down}s ($(diag)): turning Wi-Fi off and back on"
                 echo "$now" > "$STATE"
                 nmcli radio wifi off
                 sleep 5
