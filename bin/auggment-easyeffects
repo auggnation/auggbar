@@ -27,10 +27,10 @@ USER_OUT = os.path.join(HOME, ".local/share/easyeffects/output")
 RC = os.path.join(HOME, ".config/easyeffects/db/easyeffectsrc")
 UNIT = "easyeffects.service"
 
-# "Breeze" is not a QML module on this system (the style is "org.kde.breeze");
-# asking for it aborts EasyEffects.  Keep the CLI in sync with the unit.
+# The KDE QML style from qqc2-desktop-style; an unavailable style aborts
+# EasyEffects. Keep the CLI in sync with easyeffects.service.
 EE_ENV = dict(os.environ)
-EE_ENV["QT_QUICK_CONTROLS_STYLE"] = "org.kde.breeze"
+EE_ENV["QT_QUICK_CONTROLS_STYLE"] = "org.kde.desktop"
 
 
 def presets():

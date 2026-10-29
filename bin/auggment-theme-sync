@@ -636,16 +636,55 @@ def write_kde(c, mode):
     except Exception:
         return
 
-    # Make it current. plasma-apply-colorscheme rewrites ~/.config/kdeglobals and
-    # broadcasts the change so running Qt/KDE apps repaint; it works outside a
-    # full Plasma session too.
-    _run(["plasma-apply-colorscheme", "Auggment"])
-    accent = c["accent"]
-    if accent.startswith("#") and len(accent) == 7:
-        _run(["plasma-apply-colorscheme", "--accent-color", accent, "Auggment"])
+    _apply_kde_scheme(KDE_SCHEME, c["accent"])
 
     _run(["kwriteconfig6", "--file", "kdeglobals", "--group", "Icons", "--key", "Theme",
           "breeze-dark" if dark else "breeze"])
+
+
+KDEGLOBALS = os.path.join(HOME, ".config", "kdeglobals")
+
+
+def _read_ini_groups(path):
+    """INI file -> ordered {group: [lines]} (keeps every line as written)."""
+    groups, order, cur = {}, [], None
+    try:
+        with open(path) as fh:
+            for line in fh.read().splitlines():
+                if line.startswith("[") and line.rstrip().endswith("]"):
+                    cur = line.strip()[1:-1]
+                    if cur not in groups:
+                        groups[cur] = []
+                        order.append(cur)
+                elif cur is not None:
+                    groups[cur].append(line)
+    except OSError:
+        pass
+    return groups, order
+
+
+def _apply_kde_scheme(scheme_path, accent):
+    """Make the scheme current without Plasma: copy its colour groups into
+    kdeglobals (other settings untouched) and broadcast the palette change the
+    way plasma-apply-colorscheme does, so running Qt/KDE apps repaint."""
+    scheme, _ = _read_ini_groups(scheme_path)
+    glob, order = _read_ini_groups(KDEGLOBALS)
+    for g, lines in scheme.items():
+        if g.startswith("Colors:") or g == "WM":
+            if g not in glob:
+                order.append(g)
+            glob[g] = [l for l in lines if l.strip()]
+    general = [l for l in glob.get("General", []) if l.strip() and
+               not l.startswith(("ColorScheme=", "AccentColor="))]
+    general += ["ColorScheme=Auggment", "AccentColor=" + rgb_triplet(accent)]
+    if "General" not in glob:
+        order.insert(0, "General")
+    glob["General"] = general
+    text = "\n\n".join("[%s]\n%s" % (g, "\n".join(glob[g])) for g in order) + "\n"
+    _write_atomic(KDEGLOBALS, text)
+    # KGlobalSettings::notifyChange(PaletteChanged=0); apps listening repaint live.
+    _run(["dbus-send", "--session", "--type=signal", "/KGlobalSettings",
+          "org.kde.KGlobalSettings.notifyChange", "int32:0", "int32:0"])
 
 
 def write_gtk(mode):

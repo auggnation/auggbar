@@ -9,7 +9,7 @@ These are the files the Plymouth boot splash is built from. They are the
 | `auggment.script` | the script that draws the wordmark |
 | `login-banner.png` | the wordmark image for the login screen |
 | `auggment-login-banner` | the legacy helper that stamped the wordmark onto a photo wallpaper (kept for reference - the greeter now paints the wordmark directly) |
-| `../backup/system/auggment-login-wallpaper` | paints the red wordmark on a plain near-black canvas for the greeter |
+| `bin/auggment-theme-sync` (`write_login`) | paints the wordmark, recoloured to the wallpaper accent, for the greetd/ReGreet login screen (`/var/lib/auggment-login`) |
 
 The wordmark image is `logo.png` - it is already red (#FF3B30) on a
 transparent background, so the boot splash has no background image at all.
