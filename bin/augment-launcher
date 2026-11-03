@@ -9,7 +9,7 @@
 # path, and the toggle is only sent once the daemon is actually up.
 set -u
 
-LAUNCHER="$HOME/.local/bin/hyprlauncher"
+LAUNCHER="/usr/bin/hyprlauncher"
 
 export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"
 
