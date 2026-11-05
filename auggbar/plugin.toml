@@ -132,7 +132,7 @@ id = "display"
 entry = "display_widget.luau"
 
 [[panel]]
-id = "display"
+id = "displaypanel"
 entry = "display_panel.luau"
 width = 420
 height = "content"

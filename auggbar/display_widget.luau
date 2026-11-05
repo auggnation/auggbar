@@ -30,7 +30,7 @@ function update()
 end
 
 function onClick()
-  noctalia.togglePanel("auggnation/auggbar:display")
+  noctalia.togglePanel("auggnation/auggbar:displaypanel")
 end
 
 refresh()
