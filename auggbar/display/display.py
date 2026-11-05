@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """auggbar display backend for mangowm (port of the Hyprland auggment-display).
 
-Reads outputs with `wlr-randr --json`, applies changes live with wlr-randr, and
-on `keep` persists them as monitor_rule lines in a managed block of
-~/.config/mango/cfg/monitors.conf. A change reverts after REVERT_SECONDS unless kept.
+Works under mangowm and Hyprland. Reads outputs with `wlr-randr --json`, applies changes live with wlr-randr, and
+on `keep` persists them in a managed block of ~/.config/mango/cfg/monitors.conf
+(monitor_rule lines) or ~/.config/hypr/auggment-monitors.lua (hl.monitor calls). A change reverts after REVERT_SECONDS unless kept.
 
   display.py state
   display.py apply NAME '{"width":1920,"height":1200,"hz":120,"scale":1.5,"transform":0,"enabled":true,"x":0,"y":0}'
@@ -13,10 +13,14 @@ on `keep` persists them as monitor_rule lines in a managed block of
 import json, os, re, subprocess, sys, time
 
 REVERT_SECONDS = 15
-CONF = os.path.expanduser("~/.config/mango/cfg/monitors.conf")
+HYPR = bool(os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")) or (
+    not os.environ.get("MANGO_SOCKET") and os.path.isdir(os.path.expanduser("~/.config/hypr")) and
+    not os.path.isdir(os.path.expanduser("~/.config/mango")))
+CONF = os.path.expanduser("~/.config/hypr/auggment-monitors.lua" if HYPR else "~/.config/mango/cfg/monitors.conf")
 STATE = os.path.expanduser("~/.config/auggment/display-pending.json")
-BEGIN = "# BEGIN auggbar-display (managed by the Display panel)"
-END = "# END auggbar-display"
+_C = "--" if HYPR else "#"
+BEGIN = _C + " BEGIN auggbar-display (managed by the Display panel)"
+END = _C + " END auggbar-display"
 TRANSFORMS = ["normal", "90", "180", "270"]
 
 
@@ -113,6 +117,14 @@ def cmd_apply(name, patch):
 def write_conf(outs):
     lines = [BEGIN]
     for o in outs:
+        if HYPR:
+            if not o["enabled"]:
+                lines.append('hl.monitor({ output = "%s", disabled = true })' % o["name"])
+            else:
+                lines.append('hl.monitor({ output = "%s", mode = "%dx%d@%s", position = "%dx%d", scale = %s, transform = %d })' % (
+                    o["name"], o["width"], o["height"], ("%.3f" % o["hz"]).rstrip("0").rstrip("."),
+                    o["x"], o["y"], o["scale"], o["transform"]))
+            continue
         if not o["enabled"]:
             lines.append("monitor_rule = name:^%s$,disable:1" % o["name"])
             continue

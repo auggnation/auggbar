@@ -39,4 +39,4 @@ rotation every 5 minutes from `~/Documents/backgrounds`).
 
 | Widget | Type | What it does |
 |---|---|---|
-| Display | `auggnation/auggbar:display` | Shows the output's resolution/refresh. Click for the panel: resolution, refresh, scale, rotation, brightness, on/off. Changes apply live and revert after 15 s unless you press **Keep**; kept layouts are written to `~/.config/mango/cfg/monitors.conf`. Needs `wlr-randr`. |
+| Display | `auggnation/auggbar:display` | Shows the output's resolution/refresh. Click for the panel: resolution, refresh, scale, rotation, brightness, on/off. Changes apply live and revert after 15 s unless you press **Keep**; kept layouts are written to `~/.config/mango/cfg/monitors.conf` (mangowm) or `~/.config/hypr/auggment-monitors.lua` (Hyprland). Needs `wlr-randr`. |
