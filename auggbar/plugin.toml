@@ -10,9 +10,9 @@ plugin_api = 42
 author = "auggnation"
 license = "MIT"
 icon = "layout-navbar"
-description = "auggbar's scoreboard, RunViking CPU runner and CachyOS updater as Noctalia bar widgets."
+description = "auggbar's scoreboard, RunViking CPU runner, CachyOS updater and display settings as Noctalia bar widgets."
 tags = ["bar", "sports", "scores", "cpu", "updates", "fun"]
-dependencies = ["python", "pacman-contrib"]
+dependencies = ["python", "pacman-contrib", "wlr-randr"]
 
 # ── Scoreboard ────────────────────────────────────────────────────────────
 # A service fetches ESPN scores (python backend in scoreboard/, config in
@@ -121,3 +121,21 @@ entry = "updater_widget.luau"
   label_key = "settings.update_command.label"
   description_key = "settings.update_command.description"
   default = "sudo pacman -Syu"
+
+# ── Display ───────────────────────────────────────────────────────────────
+# Port of auggment-display for mangowm: resolution, refresh, scale, rotation,
+# brightness per output via wlr-randr. Keep/revert after 15 s; kept layouts
+# are saved to ~/.config/mango/cfg/monitors.conf.
+
+[[widget]]
+id = "display"
+entry = "display_widget.luau"
+
+[[panel]]
+id = "display"
+entry = "display_panel.luau"
+width = 420
+height = "content"
+max_height = 520
+placement = "attached"
+open_near_click = true

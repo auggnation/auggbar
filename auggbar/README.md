@@ -34,3 +34,9 @@ type = "auggnation/auggbar:updater"
 `noctalia/config.toml` in this folder is the full niri + Noctalia layout that
 mirrors the old auggbar (built-in widgets for everything else, wallpaper
 rotation every 5 minutes from `~/Documents/backgrounds`).
+
+## Display (mangowm)
+
+| Widget | Type | What it does |
+|---|---|---|
+| Display | `auggnation/auggbar:display` | Shows the output's resolution/refresh. Click for the panel: resolution, refresh, scale, rotation, brightness, on/off. Changes apply live and revert after 15 s unless you press **Keep**; kept layouts are written to `~/.config/mango/cfg/monitors.conf`. Needs `wlr-randr`. |
