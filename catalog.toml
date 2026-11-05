@@ -1,0 +1,16 @@
+# Noctalia plugin catalog. This repo doubles as a Noctalia plugin source:
+#   noctalia msg plugins source add auggbar git https://github.com/auggnation/auggbar
+#   noctalia msg plugins enable auggnation/auggbar
+
+[[plugin]]
+id           = "auggnation/auggbar"
+name         = "auggbar"
+version      = "1.0.0"
+author       = "auggnation"
+license      = "MIT"
+icon         = "layout-navbar"
+description  = "auggbar's scoreboard, RunViking CPU runner and CachyOS updater as Noctalia bar widgets."
+deprecated   = false
+plugin_api   = 42
+tags         = ["bar", "sports", "scores", "cpu", "updates", "fun"]
+dependencies = ["python", "pacman-contrib"]

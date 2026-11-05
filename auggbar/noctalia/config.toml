@@ -1,0 +1,84 @@
+[shell]
+polkit_agent = true
+
+# ── Wallpaper: new background from ~/Documents/backgrounds every 5 minutes ──
+[wallpaper]
+directory = "/home/auggie/Documents/backgrounds"
+
+[wallpaper.automation]
+enabled = true
+interval_seconds = 300
+order = "random"
+pause_on_fullscreen = true   # don't swap mid-game / mid-video
+
+# ── Weather (auggbar showed °F) ─────────────────────────────────────────────
+[location]
+auto_locate = true
+
+[weather]
+unit = "imperial"
+
+[widget.weather]
+show_condition = false       # icon + temp, like auggbar
+
+# ── auggbar plugin (scoreboard, RunViking, updater) ─────────────────────────
+[plugins]
+enabled = ["auggnation/auggbar"]
+
+[widget.scoreboard]
+type = "auggnation/auggbar:scoreboard"
+
+[widget.viking]
+type = "auggnation/auggbar:viking"
+
+[widget.updater]
+type = "auggnation/auggbar:updater"
+
+# ── auggbar's system card, built from Noctalia widgets ──────────────────────
+[widget.net-down]
+type = "sysmon"
+stat = "net_rx"
+visualization = "none"
+network_speed_compact = true
+label_min_width = 34
+
+[widget.net-up]
+type = "sysmon"
+stat = "net_tx"
+visualization = "none"
+network_speed_compact = true
+label_min_width = 34
+
+[widget.mic]
+type = "volume"
+device = "input"
+show_label = false           # icon only; scroll to change, hover for %
+
+[widget.network]
+show_label = false           # icon only; Wi-Fi name in the tooltip / control center
+
+[widget.privacy]
+hide_inactive = true         # like auggbar's camera light: only shows while in use
+
+[widget.media]
+hide_when_no_media = true
+max_length = 200
+
+[widget.active_window]
+max_length = 220
+
+[widget.visualizer]
+type = "audio_visualizer"
+
+# ── Bar layout, in auggbar's order ──────────────────────────────────────────
+[bar.default]
+margin_ends = 48             # still floats, a bit more room for widgets
+start  = ["launcher", "weather", "workspaces", "active_window"]
+center = ["visualizer", "clock", "media"]
+end    = ["scoreboard", "brightness", "group:system", "viking", "updater", "tray", "notifications", "control-center", "session"]
+
+[[bar.default.capsule_group]]
+id      = "system"
+members = ["net-down", "net-up", "network", "volume", "mic", "privacy", "bluetooth", "battery"]
+fill    = "surface_container"
+padding = 6.0
