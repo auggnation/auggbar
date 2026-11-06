@@ -377,6 +377,40 @@ ShellRoot {
         sbWrite.running = true
         if (!sbProc.running) sbProc.running = true
     }
+    // Favourite drivers (racing leagues) and golfers: free-text, comma separated.
+    // Matching is done by the scoreboard backend on last/full name or car number.
+    function sbRacingLeaguesOn() {
+        var ls = (root.sbFull && root.sbFull.leagues) ? root.sbFull.leagues : []
+        return ls.filter(function (l) { return String(l).indexOf("racing/") === 0 })
+    }
+    function sbHasGolf() {
+        var ls = (root.sbFull && root.sbFull.leagues) ? root.sbFull.leagues : []
+        return ls.indexOf("golf/pga") >= 0
+    }
+    function sbRacingNames() {
+        var seen = ({}), out = []
+        var r = (root.sbFull && root.sbFull.racing) ? root.sbFull.racing : ({})
+        for (var k in r) {
+            var names = r[k] || []
+            for (var i = 0; i < names.length; i++) {
+                var n = String(names[i]).trim()
+                if (n && !seen[n.toLowerCase()]) { seen[n.toLowerCase()] = true; out.push(n) }
+            }
+        }
+        return out
+    }
+    function sbGolfNames() { return (root.sbFull && root.sbFull.golf) ? root.sbFull.golf : [] }
+    function sbParseNames(raw) {
+        return String(raw).split(",").map(function (x) { return x.trim() }).filter(function (x) { return x !== "" })
+    }
+    function sbSetRacing(raw) {
+        var names = root.sbParseNames(raw)
+        var leagues = root.sbRacingLeaguesOn()
+        var racing = ({})
+        for (var i = 0; i < leagues.length; i++) racing[leagues[i]] = names
+        root.saveSb({ racing: racing })
+    }
+    function sbSetGolf(raw) { root.saveSb({ golf: root.sbParseNames(raw) }) }
     function afterSbWrite() { if (!sbProc.running) sbProc.running = true }
     function cfgVal(key, dflt) {
         if (root.sbFull && root.sbFull[key] !== undefined && root.sbFull[key] !== null) return root.sbFull[key]
@@ -810,7 +844,7 @@ ShellRoot {
         var was = root.netOpen
         root.closePanels()
         root.netOpen = !was
-        if (root.netOpen) { root.netRevision++; root.wifiNmRefreshNow() }
+        if (root.netOpen) { root.wifiScannerOff(); root.netRevision++; root.wifiNmRefreshNow() }
     }
     function openSnd() {
         var was = root.sndOpen
@@ -1005,6 +1039,20 @@ ShellRoot {
         for (var j = 0; j < ds.length; j++)
             if (ds[j] && ds[j].networks !== undefined) return ds[j]
         return null
+    }
+    // Quickshell's own background scanner must stay off: it makes the MT7925
+    // leave its channel on its own schedule. Enforced at start-up, whenever the
+    // panel opens, and by a slow timer in case the device object is re-created.
+    function wifiScannerOff() {
+        var d = root.wifiDevice()
+        if (d && d.scannerEnabled === true) d.scannerEnabled = false
+    }
+    Timer {
+        interval: 5000
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: root.wifiScannerOff()
     }
     // Wi-Fi scans only happen when the user presses Scan in the panel. Every
     // scan takes the MT7925 off-channel, which stalls traffic (video buffers
@@ -2171,11 +2219,10 @@ ShellRoot {
                 }
                 Text {
                     visible: ar.isDefault
-                    text: "DEFAULT"
+                    text: "Default"
                     color: theme.textMuted
                     font.family: theme.fontFamily
                     font.pixelSize: theme.fontSize - 3
-                    font.letterSpacing: 1
                     Layout.alignment: Qt.AlignVCenter
                 }
             }
@@ -2881,11 +2928,10 @@ ShellRoot {
                     spacing: 8
                     Rectangle { width: 8; height: 8; radius: 4; color: theme.accent; Layout.alignment: Qt.AlignVCenter }
                     Text {
-                        text: "DISPLAYS"
+                        text: "Displays"
                         color: theme.barText
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize
-                        font.letterSpacing: 1.5
                         font.bold: true
                         Layout.alignment: Qt.AlignVCenter
                     }
@@ -2957,11 +3003,10 @@ ShellRoot {
 
                     Text {
                         anchors { left: parent.left; top: parent.top; margins: 8 }
-                        text: "DRAG TO ARRANGE"
+                        text: "Drag to arrange"
                         color: theme.textMuted
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize - 3
-                        font.letterSpacing: 1
                     }
                     Text {
                         anchors { right: parent.right; top: parent.top; margins: 8 }
@@ -3049,7 +3094,7 @@ ShellRoot {
                     visible: dispCol.sel !== null
 
                     // Resolution
-                    Text { text: "RESOLUTION"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                    Text { text: "Resolution"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                     Stepper {
                         Layout.alignment: Qt.AlignRight
                         enabled: dispCol.sel && dispCol.sel.enabled
@@ -3060,7 +3105,7 @@ ShellRoot {
                     }
 
                     // Refresh
-                    Text { text: "REFRESH RATE"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                    Text { text: "Refresh rate"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                     Stepper {
                         Layout.alignment: Qt.AlignRight
                         enabled: dispCol.sel && dispCol.sel.enabled
@@ -3071,7 +3116,7 @@ ShellRoot {
                     }
 
                     // Scale
-                    Text { text: "SCALE"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                    Text { text: "Scale"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                     Stepper {
                         Layout.alignment: Qt.AlignRight
                         enabled: dispCol.sel && dispCol.sel.enabled
@@ -3082,7 +3127,7 @@ ShellRoot {
                     }
 
                     // Rotation
-                    Text { text: "ROTATION"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                    Text { text: "Rotation"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                     Segmented {
                         Layout.alignment: Qt.AlignRight
                         enabled: dispCol.sel && dispCol.sel.enabled
@@ -3104,7 +3149,7 @@ ShellRoot {
                     }
 
                     // Mirror
-                    Text { text: "MIRROR"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                    Text { text: "Mirror"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                     Stepper {
                         Layout.alignment: Qt.AlignRight
                         enabled: dispCol.sel && dispCol.sel.enabled
@@ -3128,7 +3173,7 @@ ShellRoot {
                     }
 
                     // Position
-                    Text { text: "POSITION"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                    Text { text: "Position"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                     RowLayout {
                         Layout.alignment: Qt.AlignRight
                         spacing: 6
@@ -3147,7 +3192,7 @@ ShellRoot {
                     }
 
                     // Brightness
-                    Text { text: "BRIGHTNESS"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                    Text { text: "Brightness"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.alignment: Qt.AlignRight
@@ -3174,7 +3219,6 @@ ShellRoot {
                         color: theme.textMuted
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize - 2
-                        font.letterSpacing: 1
                     }
                 }
 
@@ -3184,7 +3228,7 @@ ShellRoot {
                     visible: dispCol.sel !== null
                     spacing: 8
                     Text {
-                        text: "ENABLED"
+                        text: "Enabled"
                         color: theme.textMuted
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize - 1
@@ -3201,11 +3245,10 @@ ShellRoot {
                 Rectangle { width: parent.width; height: 1; color: theme.cardBorder }
 
                 Text {
-                    text: "AUGGMENT"
+                    text: "Auggment"
                     color: theme.barText
                     font.family: theme.fontFamily
                     font.pixelSize: theme.fontSize
-                    font.letterSpacing: 1.5
                     font.bold: true
                 }
 
@@ -3215,7 +3258,7 @@ ShellRoot {
                     columnSpacing: 10
                     rowSpacing: 8
 
-                    Text { text: "BACKGROUND"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                    Text { text: "Background"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                     RowLayout {
                         Layout.alignment: Qt.AlignRight
                         spacing: 6
@@ -3227,7 +3270,7 @@ ShellRoot {
                         Btn { glyph: "\uf021"; glyphSize: 12; hPad: 6; onClicked: root.auggRotateNow() }
                     }
 
-                    Text { text: "SCREENSAVER"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                    Text { text: "Screensaver"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                     Stepper {
                         Layout.alignment: Qt.AlignRight
                         options: root.auggTimeOpts(root.auggSsTimes)
@@ -3235,7 +3278,7 @@ ShellRoot {
                         onPicked: function (v) { root.auggSetSs(parseInt(v)) }
                     }
 
-                    Text { text: "SCREEN OFF"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                    Text { text: "Screen off"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                     Stepper {
                         Layout.alignment: Qt.AlignRight
                         options: root.auggTimeOpts(root.auggScreenOffTimes)
@@ -3243,14 +3286,14 @@ ShellRoot {
                         onPicked: function (v) { root.auggSetScreenOff(parseInt(v)) }
                     }
 
-                    Text { text: "AUTO COLOR MATCH"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                    Text { text: "Auto color match"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                     Toggle {
                         Layout.alignment: Qt.AlignRight
                         on: root.auggAutoColor
                         onToggled: function (v) { root.auggSetAutoColor(v) }
                     }
 
-                    Text { text: "DARK MODE"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                    Text { text: "Dark mode"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                     Toggle {
                         Layout.alignment: Qt.AlignRight
                         on: root.auggDarkMode
@@ -3350,7 +3393,6 @@ ShellRoot {
                         color: theme.barText
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize
-                        font.letterSpacing: 1.5
                         font.bold: true
                         Layout.alignment: Qt.AlignVCenter
                     }
@@ -3488,11 +3530,10 @@ ShellRoot {
                         spacing: 8
                         Rectangle { width: 8; height: 8; radius: 4; color: theme.accent; Layout.alignment: Qt.AlignVCenter }
                         Text {
-                            text: "SCOREBOARD SETTINGS"
+                            text: "Scoreboard settings"
                             color: theme.barText
                             font.family: theme.fontFamily
                             font.pixelSize: theme.fontSize
-                            font.letterSpacing: 1.5
                             font.bold: true
                             Layout.alignment: Qt.AlignVCenter
                         }
@@ -3503,7 +3544,7 @@ ShellRoot {
                     Rectangle { width: parent.width; height: 1; color: theme.cardBorder }
 
                     // ------------------------------------------------ basics
-                    Text { text: "BAR POSITION"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1 }
+                    Text { text: "Bar position"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1 }
                     Segmented {
                         options: [{ value: "left", label: "Left" }, { value: "center", label: "Center" }, { value: "right", label: "Right" }]
                         value: root.cfgVal("position", "right")
@@ -3513,13 +3554,13 @@ ShellRoot {
                     RowLayout {
                         width: parent.width
                         spacing: 8
-                        Text { text: "BAR LOGOS"; color: theme.barText; font.family: theme.fontFamily; font.pixelSize: theme.fontSize; Layout.fillWidth: true; Layout.alignment: Qt.AlignVCenter }
+                        Text { text: "Bar logos"; color: theme.barText; font.family: theme.fontFamily; font.pixelSize: theme.fontSize; Layout.fillWidth: true; Layout.alignment: Qt.AlignVCenter }
                         Toggle { Layout.alignment: Qt.AlignVCenter; on: !!root.cfgVal("bar_logos", true); onToggled: function (v) { root.saveSb({ bar_logos: v }) } }
                     }
                     RowLayout {
                         width: parent.width
                         spacing: 8
-                        Text { text: "LEAGUE LAST IN CYCLE"; color: theme.barText; font.family: theme.fontFamily; font.pixelSize: theme.fontSize; Layout.fillWidth: true; Layout.alignment: Qt.AlignVCenter }
+                        Text { text: "League last in cycle"; color: theme.barText; font.family: theme.fontFamily; font.pixelSize: theme.fontSize; Layout.fillWidth: true; Layout.alignment: Qt.AlignVCenter }
                         Toggle { Layout.alignment: Qt.AlignVCenter; on: !!root.cfgVal("league_in_cycle", false); onToggled: function (v) { root.saveSb({ league_in_cycle: v }) } }
                     }
 
@@ -3528,28 +3569,28 @@ ShellRoot {
                         columns: 2
                         columnSpacing: 10
                         rowSpacing: 8
-                        Text { text: "DAYS AHEAD"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                        Text { text: "Days ahead"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                         Stepper {
                             Layout.alignment: Qt.AlignRight
                             options: root.numberOpts(0, 30)
                             value: String(root.cfgVal("days_ahead", 7))
                             onPicked: function (v) { root.saveSb({ days_ahead: parseInt(v) }) }
                         }
-                        Text { text: "DAYS BACK"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                        Text { text: "Days back"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                         Stepper {
                             Layout.alignment: Qt.AlignRight
                             options: root.numberOpts(0, 14)
                             value: String(root.cfgVal("days_back", 1))
                             onPicked: function (v) { root.saveSb({ days_back: parseInt(v) }) }
                         }
-                        Text { text: "ROTATE"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                        Text { text: "Rotate"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                         Stepper {
                             Layout.alignment: Qt.AlignRight
                             options: root.listOpts([2, 3, 4, 5, 6, 8, 10, 15, 20, 30, 45, 60], "s")
                             value: String(root.cfgVal("rotate_seconds", 6))
                             onPicked: function (v) { root.saveSb({ rotate_seconds: parseInt(v) }) }
                         }
-                        Text { text: "REFRESH"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                        Text { text: "Refresh"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                         Stepper {
                             Layout.alignment: Qt.AlignRight
                             options: root.listOpts([15, 30, 45, 60, 90, 120, 180, 300, 600], "s")
@@ -3561,7 +3602,7 @@ ShellRoot {
                     Rectangle { width: parent.width; height: 1; color: theme.cardBorder }
 
                     // ----------------------------------------------- leagues
-                    Text { text: "LEAGUES"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; font.letterSpacing: 1 }
+                    Text { text: "Leagues"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; font.letterSpacing: 1 }
 
                     Repeater {
                         model: root.sbGroups
@@ -3574,7 +3615,6 @@ ShellRoot {
                                 color: theme.textMuted
                                 font.family: theme.fontFamily
                                 font.pixelSize: theme.fontSize - 2
-                                font.letterSpacing: 1
                             }
                             Flow {
                                 width: parent.width
@@ -3615,7 +3655,7 @@ ShellRoot {
                     RowLayout {
                         width: parent.width
                         spacing: 8
-                        Text { text: "FAVOURITE TEAMS"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; font.letterSpacing: 1; Layout.alignment: Qt.AlignVCenter }
+                        Text { text: "Favourite teams"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; font.letterSpacing: 1; Layout.alignment: Qt.AlignVCenter }
                         Item { Layout.fillWidth: true }
                         Btn {
                             visible: root.sbFavCount() > 0
@@ -3633,6 +3673,113 @@ ShellRoot {
                         emptyText: (root.cfgVal("leagues", []).length === 0) ? "Pick leagues above first" : "No teams found"
                         noSelectionText: "None selected"
                         onChanged: function (v) { root.sbSetTeams(v) }
+                    }
+
+                    // ------------------------------------ favourite drivers / golfers
+                    Column {
+                        visible: root.sbRacingLeaguesOn().length > 0
+                        width: parent.width
+                        spacing: 5
+                        Text { text: "Favourite drivers"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1 }
+                        Rectangle {
+                            width: parent.width
+                            height: 30
+                            radius: 8
+                            color: theme.normalFill
+                            border.width: 1
+                            border.color: drvInput.activeFocus ? theme.accent : theme.cardBorder
+                            TextInput {
+                                id: drvInput
+                                anchors.fill: parent
+                                anchors.leftMargin: 9
+                                anchors.rightMargin: 9
+                                verticalAlignment: TextInput.AlignVCenter
+                                color: theme.barText
+                                font.family: theme.fontFamily
+                                font.pixelSize: theme.fontSize
+                                selectByMouse: true
+                                clip: true
+                                Component.onCompleted: drvInput.text = root.sbRacingNames().join(", ")
+                                onEditingFinished: root.sbSetRacing(drvInput.text)
+                                Keys.onPressed: function (ev) {
+                                    if (ev.key === Qt.Key_V && (ev.modifiers & (Qt.ControlModifier | Qt.MetaModifier))) {
+                                        drvInput.insert(drvInput.cursorPosition, Quickshell.clipboardText)
+                                        ev.accepted = true
+                                    }
+                                }
+                                Connections {
+                                    target: root
+                                    function onSbFullChanged() { if (!drvInput.activeFocus) drvInput.text = root.sbRacingNames().join(", ") }
+                                }
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.left: parent.left
+                                anchors.leftMargin: 9
+                                visible: drvInput.text === "" && !drvInput.activeFocus
+                                text: "Larson, Hamlin, 24\u2026"
+                                color: theme.textMuted
+                                font.family: theme.fontFamily
+                                font.pixelSize: theme.fontSize
+                            }
+                        }
+                        Text {
+                            width: parent.width
+                            wrapMode: Text.WordWrap
+                            text: "Last name, full name or car number, separated by commas. Applies to every racing league you picked."
+                            color: theme.textMuted
+                            font.family: theme.fontFamily
+                            font.pixelSize: theme.fontSize - 2
+                        }
+                    }
+
+                    Column {
+                        visible: root.sbHasGolf()
+                        width: parent.width
+                        spacing: 5
+                        Text { text: "Favourite golfers"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1 }
+                        Rectangle {
+                            width: parent.width
+                            height: 30
+                            radius: 8
+                            color: theme.normalFill
+                            border.width: 1
+                            border.color: golfInput.activeFocus ? theme.accent : theme.cardBorder
+                            TextInput {
+                                id: golfInput
+                                anchors.fill: parent
+                                anchors.leftMargin: 9
+                                anchors.rightMargin: 9
+                                verticalAlignment: TextInput.AlignVCenter
+                                color: theme.barText
+                                font.family: theme.fontFamily
+                                font.pixelSize: theme.fontSize
+                                selectByMouse: true
+                                clip: true
+                                Component.onCompleted: golfInput.text = root.sbGolfNames().join(", ")
+                                onEditingFinished: root.sbSetGolf(golfInput.text)
+                                Keys.onPressed: function (ev) {
+                                    if (ev.key === Qt.Key_V && (ev.modifiers & (Qt.ControlModifier | Qt.MetaModifier))) {
+                                        golfInput.insert(golfInput.cursorPosition, Quickshell.clipboardText)
+                                        ev.accepted = true
+                                    }
+                                }
+                                Connections {
+                                    target: root
+                                    function onSbFullChanged() { if (!golfInput.activeFocus) golfInput.text = root.sbGolfNames().join(", ") }
+                                }
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.left: parent.left
+                                anchors.leftMargin: 9
+                                visible: golfInput.text === "" && !golfInput.activeFocus
+                                text: "Scheffler, McIlroy\u2026"
+                                color: theme.textMuted
+                                font.family: theme.fontFamily
+                                font.pixelSize: theme.fontSize
+                            }
+                        }
                     }
 
                     Text {
@@ -3789,7 +3936,7 @@ ShellRoot {
                     Rectangle { width: parent.width; height: 1; color: theme.cardBorder }
 
                     // --------------------------------------------- colours
-                    Text { text: "GAME STATE COLOURS"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; font.letterSpacing: 1 }
+                    Text { text: "Game state colours"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; font.letterSpacing: 1 }
 
                     Repeater {
                         model: root.sbColorRows()
@@ -3931,7 +4078,6 @@ ShellRoot {
                             color: theme.barText
                             font.family: theme.fontFamily
                             font.pixelSize: theme.fontSize
-                            font.letterSpacing: 1.5
                             font.bold: true
                             Layout.alignment: Qt.AlignVCenter
                         }
@@ -3986,7 +4132,7 @@ ShellRoot {
                         width: parent.width
                         spacing: 8
                         Text {
-                            text: "NETWORKS"
+                            text: "Networks"
                             color: theme.textMuted
                             font.family: theme.fontFamily
                             font.pixelSize: theme.fontSize - 1
@@ -4006,7 +4152,7 @@ ShellRoot {
                     Text {
                         width: parent.width
                         visible: root.wifiNetworks().length === 0
-                        text: Networking.wifiEnabled ? "Scanning\u2026" : "Wi-Fi is off"
+                        text: !Networking.wifiEnabled ? "Wi-Fi is off" : (root.wifiScanning ? "Scanning\u2026" : "No networks listed. Press Scan to look for networks.")
                         color: theme.textMuted
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize - 1
@@ -4183,11 +4329,10 @@ ShellRoot {
                         spacing: 8
                         Rectangle { width: 8; height: 8; radius: 4; color: theme.accent; Layout.alignment: Qt.AlignVCenter }
                         Text {
-                            text: "SOUND"
+                            text: "Sound"
                             color: theme.barText
                             font.family: theme.fontFamily
                             font.pixelSize: theme.fontSize
-                            font.letterSpacing: 1.5
                             font.bold: true
                             Layout.alignment: Qt.AlignVCenter
                         }
@@ -4197,7 +4342,7 @@ ShellRoot {
 
                     Rectangle { width: parent.width; height: 1; color: theme.cardBorder }
 
-                    Text { text: "OUTPUT"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1 }
+                    Text { text: "Output"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1 }
                     Repeater {
                         model: root.audioSinks()
                         delegate: AudioRow {
@@ -4210,7 +4355,7 @@ ShellRoot {
 
                     Rectangle { width: parent.width; height: 1; color: theme.cardBorder }
 
-                    Text { text: "INPUT"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1 }
+                    Text { text: "Input"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1 }
                     Repeater {
                         model: root.audioSources()
                         delegate: AudioRow {
@@ -4227,7 +4372,7 @@ ShellRoot {
                     }
                     Text {
                         visible: root.audioStreams().length > 0
-                        text: "PLAYBACK"
+                        text: "Playback"
                         color: theme.textMuted
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize - 1
@@ -4248,7 +4393,7 @@ ShellRoot {
                         width: parent.width
                         spacing: 8
                         Text {
-                            text: "EFFECTS"
+                            text: "Effects"
                             color: theme.textMuted
                             font.family: theme.fontFamily
                             font.pixelSize: theme.fontSize - 1
@@ -4373,7 +4518,6 @@ ShellRoot {
                             color: theme.textMuted
                             font.family: theme.fontFamily
                             font.pixelSize: theme.fontSize - 1
-                            font.letterSpacing: 1.4
                             font.bold: true
                             Layout.alignment: Qt.AlignVCenter
                         }
@@ -4442,11 +4586,10 @@ ShellRoot {
                     spacing: 8
                     Rectangle { width: 8; height: 8; radius: 4; color: theme.accent; Layout.alignment: Qt.AlignVCenter }
                     Text {
-                        text: "POWER"
+                        text: "Power"
                         color: theme.barText
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize
-                        font.letterSpacing: 1.5
                         font.bold: true
                         Layout.alignment: Qt.AlignVCenter
                     }
@@ -4530,11 +4673,10 @@ ShellRoot {
                     spacing: 8
                     Rectangle { width: 8; height: 8; radius: 4; color: theme.accent; Layout.alignment: Qt.AlignVCenter }
                     Text {
-                        text: "CALENDAR"
+                        text: "Calendar"
                         color: theme.barText
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize
-                        font.letterSpacing: 1.5
                         font.bold: true
                         Layout.alignment: Qt.AlignVCenter
                     }
@@ -4664,7 +4806,6 @@ ShellRoot {
                         color: theme.textMuted
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize - 2
-                        font.letterSpacing: 1.2
                         elide: Text.ElideRight
                     }
 
@@ -4821,11 +4962,10 @@ ShellRoot {
                         spacing: 8
                         Rectangle { width: 8; height: 8; radius: 4; color: theme.accent; Layout.alignment: Qt.AlignVCenter }
                         Text {
-                            text: "CALENDARS"
+                            text: "Calendars"
                             color: theme.barText
                             font.family: theme.fontFamily
                             font.pixelSize: theme.fontSize
-                            font.letterSpacing: 1.5
                             font.bold: true
                             Layout.alignment: Qt.AlignVCenter
                         }
@@ -4910,11 +5050,10 @@ ShellRoot {
 
                     // ------------------------------------------- linked list
                     Text {
-                        text: "CALENDARS SHOWN IN THE BAR"
+                        text: "Calendars shown in the bar"
                         color: theme.textMuted
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize - 2
-                        font.letterSpacing: 1.2
                     }
                     Repeater {
                         model: root.calCalendars
@@ -5030,11 +5169,10 @@ ShellRoot {
                     spacing: 8
                     Rectangle { width: 8; height: 8; radius: 4; color: theme.accent; Layout.alignment: Qt.AlignVCenter }
                     Text {
-                        text: "WEATHER"
+                        text: "Weather"
                         color: theme.barText
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize
-                        font.letterSpacing: 1.5
                         font.bold: true
                         Layout.alignment: Qt.AlignVCenter
                     }
@@ -5087,7 +5225,6 @@ ShellRoot {
                     color: theme.textMuted
                     font.family: theme.fontFamily
                     font.pixelSize: theme.fontSize - 1
-                    font.letterSpacing: 1.0
                 }
 
                 Column {
@@ -5178,11 +5315,10 @@ ShellRoot {
                     spacing: 8
                     Rectangle { width: 8; height: 8; radius: 4; color: theme.accent; Layout.alignment: Qt.AlignVCenter }
                     Text {
-                        text: "LOCATION"
+                        text: "Location"
                         color: theme.barText
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize
-                        font.letterSpacing: 1.5
                         font.bold: true
                         Layout.alignment: Qt.AlignVCenter
                     }
@@ -5314,11 +5450,10 @@ ShellRoot {
                     spacing: 8
                     Rectangle { width: 8; height: 8; radius: 4; color: root.btOn ? theme.accent : theme.textMuted; Layout.alignment: Qt.AlignVCenter }
                     Text {
-                        text: "BLUETOOTH"
+                        text: "Bluetooth"
                         color: theme.barText
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize
-                        font.letterSpacing: 1.5
                         font.bold: true
                         Layout.alignment: Qt.AlignVCenter
                     }
@@ -5369,7 +5504,6 @@ ShellRoot {
                     color: theme.textMuted
                     font.family: theme.fontFamily
                     font.pixelSize: theme.fontSize - 1
-                    font.letterSpacing: 1.0
                 }
 
                 Column {
@@ -5500,11 +5634,10 @@ ShellRoot {
                         spacing: 8
                         Rectangle { width: 8; height: 8; radius: 4; color: theme.accent; Layout.alignment: Qt.AlignVCenter }
                         Text {
-                            text: "BAR PLUGINS"
+                            text: "Bar plugins"
                             color: theme.barText
                             font.family: theme.fontFamily
                             font.pixelSize: theme.fontSize
-                            font.letterSpacing: 1.5
                             font.bold: true
                             Layout.alignment: Qt.AlignVCenter
                         }
@@ -5536,7 +5669,6 @@ ShellRoot {
                                 color: theme.accent
                                 font.family: theme.fontFamily
                                 font.pixelSize: theme.fontSize - 2
-                                font.letterSpacing: 1.2
                                 font.bold: true
                                 topPadding: 4
                             }
@@ -5663,7 +5795,6 @@ ShellRoot {
                         color: theme.barText
                         font.family: theme.fontFamily
                         font.pixelSize: theme.fontSize
-                        font.letterSpacing: 1.5
                         font.bold: true
                         Layout.alignment: Qt.AlignVCenter
                     }

@@ -34,7 +34,10 @@ Singleton {
     property int barHeight: 34
     property int radius: 12
     property int pad: 12
-    property string fontFamily: "JetBrainsMono Nerd Font"
+    // Text uses the desktop sans (the same face Noctalia uses); the Nerd Font
+    // stays available as the glyph face and as the fallback for icon codepoints.
+    property string fontFamily: "Noto Sans"
+    property string glyphFont: "JetBrainsMono Nerd Font"
     property int fontSize: 12
 
     property string themeDir: Quickshell.env("HOME") + "/.local/state/auggment/theme"
