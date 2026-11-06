@@ -5,6 +5,17 @@ A Quickshell bar and desktop shell for Hyprland: bar, app launcher, notification
 A single Quickshell top bar for Hyprland, made of plugins that can each be
 turned on/off, moved, and configured from the bar itself.
 
+## Screenshots
+
+The bar is wallpaper-coloured glass: it, and the text on every widget, recolour
+whenever the background changes (every five minutes).
+
+![The desktop with the auggbar](docs/images/desktop-2026-11-06.png)
+
+![The bar](docs/images/bar-2026-11-06.png)
+
+![The app launcher](docs/images/launcher-2026-11-06.png)
+
 ## Install
 
 ```sh
