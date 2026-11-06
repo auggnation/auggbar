@@ -37,13 +37,20 @@ pick() {
         find -L "${dirs[@]}" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \
             -o -iname '*.webp' -o -iname '*.bmp' \) 2>/dev/null)
     ((${#files[@]})) || return 1
-    local last="" choice tries=0
+    # Play every wallpaper once before any repeats. New files join the cycle
+    # straight away; files that were deleted simply drop out.
+    local last="" choice PLAYED="$STATE/wallpaper-played" cands=()
     [ -f "$LAST" ] && last="$(cat "$LAST")"
-    choice="$last"
-    while [[ "$choice" == "$last" && ${#files[@]} -gt 1 && $tries -lt 12 ]]; do
-        choice="${files[$((RANDOM % ${#files[@]}))]}"
-        tries=$((tries + 1))
-    done
+    touch "$PLAYED"
+    while IFS= read -r f; do
+        grep -qxF -- "$f" "$PLAYED" || cands+=("$f")
+    done < <(printf '%s\n' "${files[@]}")
+    if ((${#cands[@]} == 0)); then
+        : > "$PLAYED"                      # everything has been shown: start a new round
+        for f in "${files[@]}"; do [ "$f" = "$last" ] && [ ${#files[@]} -gt 1 ] || cands+=("$f"); done
+    fi
+    choice="${cands[$((RANDOM % ${#cands[@]}))]}"
+    printf '%s\n' "$choice" >> "$PLAYED"
     printf '%s' "$choice"
 }
 

@@ -111,6 +111,16 @@ def average_colour(image):
     return None
 
 
+def _dust(c, keys, sat=0.80, val=0.93):
+    """Grunge pass: knock the saturation and brightness down so colours read as
+    worn / oxidised instead of neon."""
+    for k in keys:
+        if k in c:
+            r, g, b = (int(c[k][i:i + 2], 16) / 255.0 for i in (1, 3, 5))
+            h, s_, v = colorsys.rgb_to_hsv(r, g, b)
+            c[k] = hsv(h, s_ * sat, v * val)
+
+
 def build(hexv, mode="dark"):
     r, g, b = (int(hexv[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
     h, s, v = colorsys.rgb_to_hsv(r, g, b)
@@ -152,21 +162,33 @@ def build(hexv, mode="dark"):
         c["bright_cyan"] = hsv(0.50 + delta, 0.62, 0.38)
         c["bright_blue"] = hsv(0.61 + delta, 0.76, 0.48)
         c["bright_magenta"] = hsv(0.83 + delta, 0.68, 0.46)
+        c["panel"] = hsv(h, 0.05, 0.94)
+        c["surface_high"] = hsv(h, 0.06, 0.90)
+        c["surface_highest"] = hsv(h, 0.07, 0.86)
+        c["outline"] = hsv(h, 0.10, 0.76)
+        c["on_accent"] = hsv(h, 0.05, 0.98)
         return c
 
-    accent = max(0.58, min(0.92, s))
-    c["accent"] = hsv(h, accent, 0.90)
-    c["background"] = hsv(h + delta * 0.0, 0.26, 0.11)
-    c["dark_background"] = hsv(h, 0.30, 0.08)
-    c["darker_background"] = hsv(h, 0.34, 0.06)
-    c["lighter_background"] = hsv(h, 0.22, 0.17)
-    c["foreground"] = hsv(h, 0.14, 0.88)
-    c["dark_foreground"] = hsv(h, 0.16, 0.52)
-    c["light_foreground"] = hsv(h, 0.12, 0.94)
-    c["bright_foreground"] = hsv(h, 0.10, 0.97)
-    c["selection"] = hsv(h, 0.30, 0.24)
-    c["muted"] = hsv(h, 0.18, 0.46)
-    c["urgent"] = hsv(0.0 + delta * 0.15, 0.75, 0.92)
+    # Grungy dark: warm, low-saturation near-blacks (the wallpaper hue is pulled
+    # toward brown), bone-coloured ink, and a dusty accent.
+    hw = (h * 0.88 + 0.07 * 0.12) % 1.0
+    c["accent"] = hsv(h, max(0.42, min(0.68, s * 0.8)), 0.80)
+    c["background"] = hsv(hw, 0.22, 0.085)
+    c["dark_background"] = hsv(hw, 0.24, 0.06)
+    c["darker_background"] = hsv(hw, 0.26, 0.045)
+    c["lighter_background"] = hsv(hw, 0.22, 0.14)
+    c["foreground"] = hsv(hw, 0.13, 0.80)
+    c["dark_foreground"] = hsv(hw, 0.10, 0.48)
+    c["light_foreground"] = hsv(hw, 0.08, 0.88)
+    c["bright_foreground"] = hsv(hw, 0.06, 0.92)
+    c["selection"] = hsv(hw, 0.34, 0.22)
+    c["muted"] = hsv(hw, 0.16, 0.44)
+    c["urgent"] = hsv(0.02, 0.62, 0.80)
+    c["panel"] = hsv(hw, 0.22, 0.115)
+    c["surface_high"] = hsv(hw, 0.22, 0.165)
+    c["surface_highest"] = hsv(hw, 0.20, 0.22)
+    c["outline"] = hsv(hw, 0.22, 0.29)
+    c["on_accent"] = hsv(hw, 0.30, 0.10)
 
     c["red"] = hsv(0.0 + delta, 0.70, 0.90)
     c["yellow"] = hsv(0.13 + delta, 0.65, 0.92)
@@ -183,6 +205,9 @@ def build(hexv, mode="dark"):
     c["bright_cyan"] = hsv(0.50 + delta, 0.62, 0.92)
     c["bright_blue"] = hsv(0.61 + delta, 0.72, 0.98)
     c["bright_magenta"] = hsv(0.83 + delta, 0.66, 0.96)
+    _dust(c, ["red", "yellow", "orange", "green", "cyan", "blue", "magenta", "brown",
+              "bright_red", "bright_yellow", "bright_green", "bright_cyan",
+              "bright_blue", "bright_magenta"])
     return c
 
 
@@ -193,7 +218,12 @@ def write_palette(c):
              'background = "%s"' % c["background"],
              'foreground = "%s"' % c["foreground"],
              'muted = "%s"' % c["muted"],
-             'urgent = "%s"' % c["urgent"]]
+             'urgent = "%s"' % c["urgent"],
+             'panel = "%s"' % c["panel"],
+             'surface_high = "%s"' % c["surface_high"],
+             'surface_highest = "%s"' % c["surface_highest"],
+             'outline = "%s"' % c["outline"],
+             'on_accent = "%s"' % c["on_accent"]]
     with open(PALETTE, "w") as fh:
         fh.write("\n".join(lines) + "\n")
 

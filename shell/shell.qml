@@ -37,9 +37,15 @@ ShellRoot {
             return root.launcherPlugin.command
         return root.home + "/.local/bin/augment-launcher"
     }
-    function launcherToggle() {
-        root.run("'" + root.launcherCommand() + "'")
+    // The launcher is built into the shell (components/AppLauncher.qml).
+    function launcherToggle() { appLauncher.toggle() }
+    AppLauncher {
+        id: appLauncher
+        powerAction: function () { root.closePanels(); root.togglePower() }
     }
+    // Notification daemon (owns org.freedesktop.Notifications).
+    Notifications { id: notifications }
+    ClipboardPicker { id: clipboardPicker }
 
     // On-screen display, driven by the hardware volume / brightness / mic keys.
     property bool osdVisible: false
@@ -1462,17 +1468,17 @@ ShellRoot {
 
     Process {
         id: auggBgRead
-        command: ["bash", "-lc", "noctalia msg config-get wallpaper.automation.interval_seconds 2>/dev/null | grep -E '^[0-9]+$' || cat $HOME/.config/auggment/bg_interval 2>/dev/null || echo 300"]
+        command: ["bash", "-lc", "cat $HOME/.config/auggment/bg_interval 2>/dev/null || echo 300"]
         stdout: StdioCollector { onStreamFinished: root.syncAuggIndex("bg", this.text) }
     }
     Process {
         id: auggSsRead
-        command: ["bash", "-lc", "noctalia msg config-get idle.behavior.screensaver.timeout 2>/dev/null | grep -E '^[0-9]+$' || cat $HOME/.config/auggment/screensaver_timeout 2>/dev/null || echo 300"]
+        command: ["bash", "-lc", "cat $HOME/.config/auggment/screensaver_timeout 2>/dev/null || echo 300"]
         stdout: StdioCollector { onStreamFinished: root.syncAuggIndex("ss", this.text) }
     }
     Process {
         id: auggScreenOffRead
-        command: ["bash", "-lc", "noctalia msg config-get idle.behavior.screen-off.timeout 2>/dev/null | grep -E '^[0-9]+$' || cat $HOME/.config/auggment/screen_off_timeout 2>/dev/null || echo 600"]
+        command: ["bash", "-lc", "cat $HOME/.config/auggment/screen_off_timeout 2>/dev/null || echo 600"]
         stdout: StdioCollector { onStreamFinished: root.syncAuggIndex("off", this.text) }
     }
     Process {
@@ -1520,19 +1526,18 @@ ShellRoot {
         root.auggBgIndex = i
         var v = root.auggBgIntervals[i]
         root.run("mkdir -p $HOME/.config/auggment && echo " + v + " > $HOME/.config/auggment/bg_interval")
-        // Noctalia owns wallpaper rotation now: set its automation interval.
-        root.run("noctalia msg config-set wallpaper.automation.interval_seconds " + v)
+        root.run("N=$(printf 'auggment-wallpaper-%s' rotate); pkill -f \"$N\" >/dev/null 2>&1 || true; sleep 0.3; setsid \"$N\" " + v + " >/dev/null 2>&1 &")
     }
-    function auggRotateNow() { root.run("noctalia msg wallpaper-next") }
+    function auggRotateNow() { root.run("auggment-wallpaper-rotate --once") }
     function auggSetSs(i) {
         root.auggSsIndex = i
         var v = root.auggSsTimes[i]
-        root.run("mkdir -p $HOME/.config/auggment && echo " + v + " > $HOME/.config/auggment/screensaver_timeout && noctalia msg config-set idle.behavior.screensaver.timeout " + v)
+        root.run("mkdir -p $HOME/.config/auggment && echo " + v + " > $HOME/.config/auggment/screensaver_timeout && '" + root.dispDir + "/set-screensaver.sh' " + v)
     }
     function auggSetScreenOff(i) {
         root.auggScreenOffIndex = i
         var v = root.auggScreenOffTimes[i]
-        root.run("mkdir -p $HOME/.config/auggment && echo " + v + " > $HOME/.config/auggment/screen_off_timeout && noctalia msg config-set idle.behavior.screen-off.timeout " + v)
+        root.run("mkdir -p $HOME/.config/auggment && echo " + v + " > $HOME/.config/auggment/screen_off_timeout && '" + root.dispDir + "/auggment-idle-sync.sh'")
     }
     function auggSetAutoColor(v) {
         root.auggAutoColor = v
@@ -2829,20 +2834,24 @@ ShellRoot {
             screen: modelData
             anchors { top: true; left: true; right: true }
             // Floating bar like the Noctalia one: 3 px off the top, inset ends, rounded.
-            margins { top: 3; left: 48; right: 48 }
-            exclusiveZone: theme.barHeight
-            implicitHeight: theme.barHeight
+            margins { top: 0; left: 48; right: 48 }
+            exclusiveZone: theme.barHeight + 3
+            implicitHeight: theme.barHeight + 16
             color: "transparent"
             WlrLayershell.layer: WlrLayer.Top
             WlrLayershell.namespace: "quickshell-bar"
+            // The whole bar is one rigid piece, hung from the left tape and sagging
+            // a few pixels toward the right end.
+            mask: Region { x: 0; y: 0; width: barWin.width; height: theme.barHeight + 8 }
+            Item {
+                id: rig
+                x: 0; y: 3
+                width: parent.width
+                height: theme.barHeight
+                rotation: 0.22
+                transformOrigin: Item.TopLeft
 
-            Rectangle {
-                anchors.fill: parent
-                radius: theme.barHeight / 2
-                color: Qt.rgba(theme.barBackground.r, theme.barBackground.g, theme.barBackground.b, 0.88)
-                border.width: 1
-                border.color: Qt.rgba(theme.accent.r, theme.accent.g, theme.accent.b, 0.22)
-            }
+            GraffitiBar { anchors.fill: parent }
 
             // Widgets come from ~/.config/auggbar/settings.json (see
             // barWidgets below). The clock section stays pinned to the centre;
@@ -2892,6 +2901,7 @@ ShellRoot {
                     anchors.verticalCenter: parent.verticalCenter
                 }
             }
+            }
         }
     }
 
@@ -2916,6 +2926,7 @@ ShellRoot {
             color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
+            Grain {}
 
             Column {
                 id: dispCol
@@ -3374,6 +3385,7 @@ ShellRoot {
             color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
+            Grain {}
 
             Column {
                 id: sbCol
@@ -3510,6 +3522,7 @@ ShellRoot {
             color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
+            Grain {}
 
             Flickable {
                 id: sbSetFlick
@@ -4054,6 +4067,7 @@ ShellRoot {
             color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
+            Grain {}
 
             Flickable {
                 id: netFlick
@@ -4309,6 +4323,7 @@ ShellRoot {
             color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
+            Grain {}
 
             Flickable {
                 id: sndFlick
@@ -4490,6 +4505,7 @@ ShellRoot {
             color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
+            Grain {}
 
             RowLayout {
                 anchors.fill: parent
@@ -4575,6 +4591,7 @@ ShellRoot {
             color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
+            Grain {}
 
             Column {
                 id: powerCol
@@ -4659,6 +4676,7 @@ ShellRoot {
             color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
+            Grain {}
 
             Column {
                 id: calCol
@@ -4942,6 +4960,7 @@ ShellRoot {
             color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
+            Grain {}
 
             Flickable {
                 id: calAuthFlick
@@ -5155,6 +5174,7 @@ ShellRoot {
             color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
+            Grain {}
 
             Column {
                 id: wxCol
@@ -5301,6 +5321,7 @@ ShellRoot {
             color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
+            Grain {}
 
             Column {
                 id: wxSetCol
@@ -5431,6 +5452,7 @@ ShellRoot {
             color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
+            Grain {}
             focus: btPopup.visible
             Keys.onUpPressed: { btSel--; btSelClamp() }
             Keys.onDownPressed: { btSel++; btSelClamp() }
@@ -5616,6 +5638,7 @@ ShellRoot {
             color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
+            Grain {}
 
             Flickable {
                 anchors.fill: parent
@@ -5780,6 +5803,7 @@ ShellRoot {
             color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
+            Grain {}
 
             Column {
                 id: plSetCol
