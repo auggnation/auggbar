@@ -18,12 +18,21 @@ Singleton {
     property color darkerBackground: "#16161e"
     property color lighterBackground: "#24283b"
 
+    // Noctalia-style surfaces (rendered from the wallpaper palette by the
+    // auggbar-palette template): panels sit on surface_container, controls on
+    // surface_container_high, edges are the soft outline_variant.
+    property color panelBackground: "#1f2030"
+    property color surfaceHigh: "#24283b"
+    property color surfaceHighest: "#2f334d"
+    property color outlineVariant: "#3b3f5c"
+    property color textOnAccent: "#1a1b26"
+
     property color barBackground: "#1a1b26"
     property color barText: "#a9b1d6"
     property color barActive: "#f7768e"
 
     property int barHeight: 34
-    property int radius: 10
+    property int radius: 12
     property int pad: 12
     property string fontFamily: "JetBrainsMono Nerd Font"
     property int fontSize: 12
@@ -31,11 +40,11 @@ Singleton {
     property string themeDir: Quickshell.env("HOME") + "/.local/state/auggment/theme"
 
     readonly property color hoverFill: Qt.rgba(t.barText.r, t.barText.g, t.barText.b, 0.08)
-    readonly property color normalFill: Qt.rgba(t.barText.r, t.barText.g, t.barText.b, 0.05)
-    readonly property color cardFill: Qt.rgba(t.foreground.r, t.foreground.g, t.foreground.b, 0.04)
-    readonly property color cardBorder: Qt.rgba(t.foreground.r, t.foreground.g, t.foreground.b, 0.16)
-    readonly property color popupBorder: t.accent
-    property int popupRadius: 14
+    readonly property color normalFill: t.surfaceHigh
+    readonly property color cardFill: t.surfaceHigh
+    readonly property color cardBorder: t.outlineVariant
+    readonly property color popupBorder: t.outlineVariant
+    property int popupRadius: 16
     readonly property color textMuted: Qt.rgba(t.barText.r, t.barText.g, t.barText.b, 0.6)
     readonly property color accentSoft: Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.16)
 
@@ -92,6 +101,11 @@ Singleton {
             else if (kv.k === "foreground") { t.foreground = kv.v; t.barText = kv.v }
             else if (kv.k === "muted") t.muted = kv.v
             else if (kv.k === "urgent") t.urgent = kv.v
+            else if (kv.k === "panel") t.panelBackground = kv.v
+            else if (kv.k === "surface_high") t.surfaceHigh = kv.v
+            else if (kv.k === "surface_highest") t.surfaceHighest = kv.v
+            else if (kv.k === "outline") t.outlineVariant = kv.v
+            else if (kv.k === "on_accent") t.textOnAccent = kv.v
         }
     }
 

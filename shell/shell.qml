@@ -597,7 +597,9 @@ ShellRoot {
     Timer {
         id: micProbeTimer
         interval: 8000
-        running: true
+        // Only probe when the hardware switch is unreadable: every probe opens
+        // the real mic, which Noctalia reports as "Microphone Stopped".
+        running: !root.micHwKnown
         repeat: true
         triggeredOnStart: true
         onTriggered: if (!micProbeProc.running) micProbeProc.running = true
@@ -1412,17 +1414,17 @@ ShellRoot {
 
     Process {
         id: auggBgRead
-        command: ["bash", "-lc", "cat $HOME/.config/auggment/bg_interval 2>/dev/null || echo 300"]
+        command: ["bash", "-lc", "noctalia msg config-get wallpaper.automation.interval_seconds 2>/dev/null | grep -E '^[0-9]+$' || cat $HOME/.config/auggment/bg_interval 2>/dev/null || echo 300"]
         stdout: StdioCollector { onStreamFinished: root.syncAuggIndex("bg", this.text) }
     }
     Process {
         id: auggSsRead
-        command: ["bash", "-lc", "cat $HOME/.config/auggment/screensaver_timeout 2>/dev/null || echo 300"]
+        command: ["bash", "-lc", "noctalia msg config-get idle.behavior.screensaver.timeout 2>/dev/null | grep -E '^[0-9]+$' || cat $HOME/.config/auggment/screensaver_timeout 2>/dev/null || echo 300"]
         stdout: StdioCollector { onStreamFinished: root.syncAuggIndex("ss", this.text) }
     }
     Process {
         id: auggScreenOffRead
-        command: ["bash", "-lc", "cat $HOME/.config/auggment/screen_off_timeout 2>/dev/null || echo 600"]
+        command: ["bash", "-lc", "noctalia msg config-get idle.behavior.screen-off.timeout 2>/dev/null | grep -E '^[0-9]+$' || cat $HOME/.config/auggment/screen_off_timeout 2>/dev/null || echo 600"]
         stdout: StdioCollector { onStreamFinished: root.syncAuggIndex("off", this.text) }
     }
     Process {
@@ -1470,18 +1472,19 @@ ShellRoot {
         root.auggBgIndex = i
         var v = root.auggBgIntervals[i]
         root.run("mkdir -p $HOME/.config/auggment && echo " + v + " > $HOME/.config/auggment/bg_interval")
-        root.run("N=$(printf 'auggment-wallpaper-%s' rotate); pkill -f \"$N\" >/dev/null 2>&1 || true; sleep 0.3; setsid \"$N\" " + v + " >/dev/null 2>&1 &")
+        // Noctalia owns wallpaper rotation now: set its automation interval.
+        root.run("noctalia msg config-set wallpaper.automation.interval_seconds " + v)
     }
-    function auggRotateNow() { root.run("auggment-wallpaper-rotate --once") }
+    function auggRotateNow() { root.run("noctalia msg wallpaper-next") }
     function auggSetSs(i) {
         root.auggSsIndex = i
         var v = root.auggSsTimes[i]
-        root.run("mkdir -p $HOME/.config/auggment && echo " + v + " > $HOME/.config/auggment/screensaver_timeout && '" + root.dispDir + "/set-screensaver.sh' " + v)
+        root.run("mkdir -p $HOME/.config/auggment && echo " + v + " > $HOME/.config/auggment/screensaver_timeout && noctalia msg config-set idle.behavior.screensaver.timeout " + v)
     }
     function auggSetScreenOff(i) {
         root.auggScreenOffIndex = i
         var v = root.auggScreenOffTimes[i]
-        root.run("mkdir -p $HOME/.config/auggment && echo " + v + " > $HOME/.config/auggment/screen_off_timeout && '" + root.dispDir + "/auggment-idle-sync.sh'")
+        root.run("mkdir -p $HOME/.config/auggment && echo " + v + " > $HOME/.config/auggment/screen_off_timeout && noctalia msg config-set idle.behavior.screen-off.timeout " + v)
     }
     function auggSetAutoColor(v) {
         root.auggAutoColor = v
@@ -2091,7 +2094,7 @@ ShellRoot {
         Behavior on color { ColorAnimation { duration: 120 } }
         Rectangle {
             width: 16; height: 16; radius: 8
-            color: tg.on ? theme.barBackground : theme.textMuted
+            color: tg.on ? theme.textOnAccent : theme.textMuted
             y: 1
             x: tg.on ? tg.width - width - 2 : 2
             Behavior on x { NumberAnimation { duration: 120 } }
@@ -2108,9 +2111,9 @@ ShellRoot {
             id: track
             anchors.verticalCenter: parent.verticalCenter
             width: parent.width
-            height: 6
-            radius: 3
-            color: theme.normalFill
+            height: 8
+            radius: 4
+            color: theme.surfaceHighest
             Rectangle {
                 width: track.width * Math.max(0, Math.min(1, sl.value / 100))
                 height: parent.height
@@ -2119,8 +2122,8 @@ ShellRoot {
             }
         }
         Rectangle {
-            width: 14; height: 14; radius: 7
-            color: theme.barText
+            width: 16; height: 16; radius: 8
+            color: theme.accent
             anchors.verticalCenter: parent.verticalCenter
             x: Math.max(0, Math.min(sl.width - width, track.width * (sl.value / 100) - width / 2))
         }
@@ -2863,7 +2866,7 @@ ShellRoot {
         Rectangle {
             anchors.fill: parent
             radius: theme.popupRadius
-            color: theme.barBackground
+            color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
 
@@ -3325,7 +3328,7 @@ ShellRoot {
         Rectangle {
             anchors.fill: parent
             radius: theme.popupRadius
-            color: theme.barBackground
+            color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
 
@@ -3462,7 +3465,7 @@ ShellRoot {
         Rectangle {
             anchors.fill: parent
             radius: theme.popupRadius
-            color: theme.barBackground
+            color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
 
@@ -3901,7 +3904,7 @@ ShellRoot {
         Rectangle {
             anchors.fill: parent
             radius: theme.popupRadius
-            color: theme.barBackground
+            color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
 
@@ -4157,7 +4160,7 @@ ShellRoot {
         Rectangle {
             anchors.fill: parent
             radius: theme.popupRadius
-            color: theme.barBackground
+            color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
 
@@ -4339,7 +4342,7 @@ ShellRoot {
         Rectangle {
             anchors.fill: parent
             radius: theme.popupRadius
-            color: theme.barBackground
+            color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
 
@@ -4425,7 +4428,7 @@ ShellRoot {
         Rectangle {
             anchors.fill: parent
             radius: theme.popupRadius
-            color: theme.barBackground
+            color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
 
@@ -4510,7 +4513,7 @@ ShellRoot {
         Rectangle {
             anchors.fill: parent
             radius: theme.popupRadius
-            color: theme.barBackground
+            color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
 
@@ -4795,7 +4798,7 @@ ShellRoot {
         Rectangle {
             anchors.fill: parent
             radius: theme.popupRadius
-            color: theme.barBackground
+            color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
 
@@ -5010,7 +5013,7 @@ ShellRoot {
         Rectangle {
             anchors.fill: parent
             radius: theme.popupRadius
-            color: theme.barBackground
+            color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
 
@@ -5158,7 +5161,7 @@ ShellRoot {
         Rectangle {
             anchors.fill: parent
             radius: theme.popupRadius
-            color: theme.barBackground
+            color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
 
@@ -5289,7 +5292,7 @@ ShellRoot {
             id: btBox
             anchors.fill: parent
             radius: theme.popupRadius
-            color: theme.barBackground
+            color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
             focus: btPopup.visible
@@ -5476,7 +5479,7 @@ ShellRoot {
         Rectangle {
             anchors.fill: parent
             radius: theme.popupRadius
-            color: theme.barBackground
+            color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
 
@@ -5642,7 +5645,7 @@ ShellRoot {
         Rectangle {
             anchors.fill: parent
             radius: theme.popupRadius
-            color: theme.barBackground
+            color: theme.panelBackground
             border.width: 2
             border.color: theme.popupBorder
 
