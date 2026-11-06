@@ -18,6 +18,7 @@ local loading = false
 local draft = { url = "", id = "", secret = "" }
 local render
 
+local CELL = 48
 local function pad(n) return string.format("%02d", n) end
 local function iso(y, m, d) return string.format("%04d-%02d-%02d", y, m, d) end
 
@@ -98,7 +99,7 @@ local function grid()
   local rows = {}
   local head = {}
   for _, n in ipairs(DOW) do
-    table.insert(head, ui.label({ text = n, width = 40, textAlign = "center", fontSize = 11, color = "on_surface_variant" }))
+    table.insert(head, ui.label({ text = n, width = CELL, flexGrow = 1, textAlign = "center", fontSize = 11, color = "on_surface_variant" }))
   end
   table.insert(rows, ui.row({ gap = 2 }, head))
 
@@ -110,18 +111,19 @@ local function grid()
     local cells = {}
     for _ = 1, 7 do
       if day < 1 or day > n then
-        table.insert(cells, ui.box({ width = 40, height = 32 }))
+        table.insert(cells, ui.label({ text = "", width = CELL, flexGrow = 1, height = 32 }))
       else
         local d = day
         local key = iso(view.y, view.m, d)
         local isSel = sel.y == view.y and sel.m == view.m and sel.d == d
         local isToday = today.y == view.y and today.m == view.m and today.d == d
-        local dot = hasEvents(key) and "•" or ""
         table.insert(cells, ui.button({
-          text = tostring(d) .. dot,
-          width = 40,
+          text = tostring(d),
+          width = CELL,
+          flexGrow = 1,
           controlSize = "sm",
-          variant = isSel and "primary" or (isToday and "secondary" or "ghost"),
+          tooltip = isToday and "Today" or nil,
+          variant = isSel and "primary" or ((isToday or hasEvents(key)) and "secondary" or "ghost"),
           onClick = function()
             sel = { y = view.y, m = view.m, d = d }
             render()
@@ -240,7 +242,14 @@ render = function()
   local kids = {}
   table.insert(kids, ui.row({ gap = 6, align = "center" }, {
     ui.glyph({ name = "calendar", size = 18, color = "primary" }),
-    ui.label({ text = MONTHS[view.m] .. " " .. view.y, fontSize = 16, fontWeight = "bold", flexGrow = 1 }),
+    ui.label({ text = MONTHS[view.m] .. " " .. view.y, fontSize = 16, fontWeight = "bold", flexGrow = 1, maxLines = 1 }),
+    ui.button({ glyph = "settings", variant = showSetup and "primary" or "ghost", controlSize = "sm", tooltip = "Calendars", onClick = function()
+      showSetup = not showSetup
+      render()
+    end }),
+    ui.button({ glyph = "close", variant = "ghost", controlSize = "sm", onClick = function() panel.close() end }),
+  }))
+  table.insert(kids, ui.row({ gap = 6, align = "center" }, {
     ui.button({ glyph = "chevron-left", variant = "ghost", controlSize = "sm", onClick = function() shiftMonth(-1) end }),
     ui.button({ text = "Today", variant = "ghost", controlSize = "sm", onClick = function()
       view = { y = today.y, m = today.m }
@@ -248,12 +257,8 @@ render = function()
       loadEvents(false)
     end }),
     ui.button({ glyph = "chevron-right", variant = "ghost", controlSize = "sm", onClick = function() shiftMonth(1) end }),
+    ui.label({ text = "", flexGrow = 1 }),
     ui.button({ glyph = "refresh", variant = "ghost", controlSize = "sm", tooltip = "Refresh", onClick = function() loadEvents(true) end }),
-    ui.button({ glyph = "settings", variant = showSetup and "primary" or "ghost", controlSize = "sm", tooltip = "Calendars", onClick = function()
-      showSetup = not showSetup
-      render()
-    end }),
-    ui.button({ glyph = "close", variant = "ghost", controlSize = "sm", onClick = function() panel.close() end }),
   }))
   for _, r in ipairs(grid()) do table.insert(kids, r) end
   table.insert(kids, ui.separator({}))
