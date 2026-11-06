@@ -25,6 +25,25 @@ show_condition = false       # icon + temp, like auggbar
 [plugins]
 enabled = ["auggnation/auggbar"]
 
+# Declaring any source replaces the defaults, so the built-in two are listed too.
+[[plugins.source]]
+name     = "official"
+kind     = "git"
+location = "https://github.com/noctalia-dev/official-plugins"
+enabled  = true
+
+[[plugins.source]]
+name     = "community"
+kind     = "git"
+location = "https://github.com/noctalia-dev/community-plugins"
+enabled  = true
+
+[[plugins.source]]            # github.com/auggnation/auggbar doubles as a plugin source
+name     = "auggbar"
+kind     = "git"
+location = "/home/auggie/Projects/auggbar"
+enabled  = true
+
 [widget.scoreboard]
 type = "auggnation/auggbar:scoreboard"
 
@@ -33,6 +52,9 @@ type = "auggnation/auggbar:viking"
 
 [widget.updater]
 type = "auggnation/auggbar:updater"
+
+[widget.display]
+type = "auggnation/auggbar:display"
 
 # ── auggbar's system card, built from Noctalia widgets ──────────────────────
 [widget.net-down]
@@ -49,10 +71,8 @@ visualization = "none"
 network_speed_compact = true
 label_min_width = 34
 
-[widget.mic]
-type = "volume"
-device = "input"
-show_label = false           # icon only; scroll to change, hover for %
+[widget.mic]                 # Framework hardware mic switch + mute state (auggbar plugin)
+type = "auggnation/auggbar:mic"
 
 [widget.network]
 show_label = false           # icon only; Wi-Fi name in the tooltip / control center
@@ -75,10 +95,35 @@ type = "audio_visualizer"
 margin_ends = 48             # still floats, a bit more room for widgets
 start  = ["launcher", "weather", "workspaces", "active_window"]
 center = ["visualizer", "clock", "media"]
-end    = ["scoreboard", "brightness", "group:system", "viking", "updater", "tray", "notifications", "control-center", "session"]
+end    = ["scoreboard", "brightness", "group:system", "display", "viking", "updater", "tray", "notifications", "control-center", "session"]
 
 [[bar.default.capsule_group]]
 id      = "system"
 members = ["net-down", "net-up", "network", "volume", "mic", "privacy", "bluetooth", "battery"]
 fill    = "surface_container"
 padding = 6.0
+
+# ── App colours follow Noctalia's theme (Ghostty, GTK apps, cava, btop, Alacritty) ──
+[theme.templates]
+builtin_ids = ["ghostty", "gtk3", "gtk4", "cava", "btop", "alacritty"]
+
+# ── Idle: screensaver, lock and screen-off (timeouts are editable in the Display panel) ──
+[idle]
+behavior_order = ["screensaver", "lock", "screen-off"]
+pre_action_fade_seconds = 2.0
+
+[idle.behavior.screensaver]
+action  = "command"
+command = "ghostty --title=screensaver -e /home/auggie/.local/bin/auggment-screensaver"
+timeout = 0                  # 0 = off
+enabled = true
+
+[idle.behavior.lock]
+action  = "lock"
+timeout = 600
+enabled = true
+
+[idle.behavior.screen-off]
+action  = "screen_off"
+timeout = 660
+enabled = true
