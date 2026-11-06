@@ -7,7 +7,8 @@ on `keep` persists them in a managed block of ~/.config/mango/cfg/monitors.conf
 
   display.py state
   display.py apply NAME '{"width":1920,"height":1200,"hz":120,"scale":1.5,"transform":0,"enabled":true,"x":0,"y":0}'
-  display.py keep | revert | revert-unless-kept
+  display.py arrange NAME OTHER left|right|above|below
+  display.py keep | revert | revert-unless-kept | forget
   display.py brightness get|set [PERCENT] [--monitor NAME]
 """
 import json, os, re, subprocess, sys, time
@@ -46,9 +47,10 @@ def read_outputs():
             "width": cur["width"] if cur else 0,
             "height": cur["height"] if cur else 0,
             "hz": round(cur["refresh"], 2) if cur else 0,
-            "scale": round(float(o.get("scale", 1)), 3),
+            "scale": round(float(o.get("scale", 1)), 2),
             "transform": TRANSFORMS.index(tr) if tr in TRANSFORMS else 0,
             "x": pos.get("x", 0), "y": pos.get("y", 0),
+            "vrr": bool(o.get("adaptive_sync")),
             "modes": [{"width": m["width"], "height": m["height"], "hz": round(m["refresh"], 2)}
                       for m in o.get("modes", [])],
         })
@@ -81,6 +83,8 @@ def apply_settings(name, s):
         if s.get("scale"):
             cmd += ["--scale", str(s["scale"])]
         cmd += ["--transform", TRANSFORMS[int(s.get("transform", 0)) % 4]]
+        if "vrr" in s:
+            cmd += ["--adaptive-sync", "enabled" if s["vrr"] else "disabled"]
         if "x" in s and "y" in s:
             cmd += ["--pos", "%d,%d" % (s["x"], s["y"])]
     r = run(cmd)
@@ -101,7 +105,7 @@ def cmd_apply(name, patch):
         print(json.dumps({"ok": False, "error": "can't turn off the only display"})); return
     p = pending()
     before = p[name]["before"] if name in p else cur
-    new = {k: cur[k] for k in ("enabled", "width", "height", "hz", "scale", "transform", "x", "y")}
+    new = {k: cur[k] for k in ("enabled", "width", "height", "hz", "scale", "transform", "x", "y", "vrr")}
     new.update(patch)
     ok, err = apply_settings(name, new)
     if not ok:
@@ -121,21 +125,55 @@ def write_conf(outs):
             if not o["enabled"]:
                 lines.append('hl.monitor({ output = "%s", disabled = true })' % o["name"])
             else:
-                lines.append('hl.monitor({ output = "%s", mode = "%dx%d@%s", position = "%dx%d", scale = %s, transform = %d })' % (
+                lines.append('hl.monitor({ output = "%s", mode = "%dx%d@%s", position = "%dx%d", scale = %s, transform = %d, vrr = %d })' % (
                     o["name"], o["width"], o["height"], ("%.3f" % o["hz"]).rstrip("0").rstrip("."),
-                    o["x"], o["y"], o["scale"], o["transform"]))
+                    o["x"], o["y"], o["scale"], o["transform"], int(o["vrr"])))
             continue
         if not o["enabled"]:
             lines.append("monitor_rule = name:^%s$,disable:1" % o["name"])
             continue
-        lines.append("monitor_rule = name:^%s$,width:%d,height:%d,refresh:%s,x:%d,y:%d,scale:%s,rr:%d" % (
+        lines.append("monitor_rule = name:^%s$,width:%d,height:%d,refresh:%s,x:%d,y:%d,scale:%s,rr:%d,vrr:%d" % (
             o["name"], o["width"], o["height"], ("%.3f" % o["hz"]).rstrip("0").rstrip("."),
-            max(0, o["x"]), max(0, o["y"]), o["scale"], o["transform"]))
+            max(0, o["x"]), max(0, o["y"]), o["scale"], o["transform"], int(o["vrr"])))
     lines.append(END)
     text = open(CONF).read() if os.path.exists(CONF) else ""
     text = re.sub(re.escape(BEGIN) + r".*?" + re.escape(END) + r"\n?", "", text, flags=re.S)
     os.makedirs(os.path.dirname(CONF), exist_ok=True)
     open(CONF, "w").write(text.rstrip("\n") + "\n\n" + "\n".join(lines) + "\n")
+
+
+def cmd_arrange(name, other, side):
+    """Place NAME on one side of OTHER (left|right|above|below), aligned to its top/left edge."""
+    outs = {o["name"]: o for o in read_outputs()}
+    a, b = outs.get(name), outs.get(other)
+    if not a or not b:
+        print(json.dumps({"ok": False, "error": "unknown output"})); return
+
+    def logical(o):
+        w, h = o["width"], o["height"]
+        if o["transform"] % 2:
+            w, h = h, w
+        return round(w / o["scale"]), round(h / o["scale"])
+
+    aw, ah = logical(a)
+    bw, bh = logical(b)
+    x, y = {"right": (b["x"] + bw, b["y"]), "left": (b["x"] - aw, b["y"]),
+            "below": (b["x"], b["y"] + bh), "above": (b["x"], b["y"] - ah)}[side]
+    if x < 0 or y < 0:  # XWayland dislikes negative coordinates: shift everything instead
+        dx, dy = max(0, -x), max(0, -y)
+        for n, o in outs.items():
+            if n != name:
+                apply_settings(n, dict(o, x=o["x"] + dx, y=o["y"] + dy))
+        x, y = x + dx, y + dy
+    cmd_apply(name, {"x": x, "y": y})
+
+
+def cmd_forget():
+    """Drop the saved layout (mango: remove the managed block; Hyprland: empty it)."""
+    text = open(CONF).read() if os.path.exists(CONF) else ""
+    text = re.sub(re.escape(BEGIN) + r".*?" + re.escape(END) + r"\n?", "", text, flags=re.S)
+    open(CONF, "w").write(text.rstrip("\n") + "\n")
+    save_pending({})
 
 
 def cmd_keep():
@@ -178,6 +216,8 @@ def main():
     if c == "state": cmd_state()
     elif c == "apply": cmd_apply(a[1], json.loads(a[2]))
     elif c == "keep": cmd_keep()
+    elif c == "forget": cmd_forget()
+    elif c == "arrange": cmd_arrange(a[1], a[2], a[3])
     elif c == "revert": cmd_revert()
     elif c == "revert-unless-kept": cmd_revert_unless_kept()
     elif c == "brightness": cmd_brightness(a[1:])

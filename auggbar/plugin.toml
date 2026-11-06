@@ -12,7 +12,7 @@ license = "MIT"
 icon = "layout-navbar"
 description = "auggbar's scoreboard, RunViking CPU runner, CachyOS updater and display settings as Noctalia bar widgets."
 tags = ["bar", "sports", "scores", "cpu", "updates", "fun"]
-dependencies = ["python", "pacman-contrib", "wlr-randr"]
+dependencies = ["python", "pacman-contrib", "wlr-randr", "libgpiod", "v4l-utils"]
 
 # ── Scoreboard ────────────────────────────────────────────────────────────
 # A service fetches ESPN scores (python backend in scoreboard/, config in
@@ -121,6 +121,11 @@ entry = "updater_widget.luau"
   label_key = "settings.update_command.label"
   description_key = "settings.update_command.description"
   default = "sudo pacman -Syu"
+
+# ── Microphone (Framework hardware switch aware) ─────────────────────────
+[[widget]]
+id = "mic"
+entry = "mic_widget.luau"
 
 # ── Display ───────────────────────────────────────────────────────────────
 # Port of auggment-display for mangowm: resolution, refresh, scale, rotation,

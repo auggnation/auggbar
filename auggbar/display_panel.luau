@@ -13,6 +13,12 @@ local sel = 1
 local brightness = nil
 local message = ""
 local deadline = 0
+local arrangeIdx = 0
+local idle = { off = 11, saver = 0 }
+
+-- idle timeouts (minutes, 0 = never), applied through Noctalia's idle behaviours
+local OFF_CHOICES = { 0, 5, 10, 15, 30, 60 }
+local SAVER_CHOICES = { 0, 2, 5, 10, 15, 30 }
 
 local render
 
@@ -39,6 +45,12 @@ local function load()
     end
     render()
   end)
+  for _, k in ipairs({ { "screen-off", "off" }, { "screensaver", "saver" } }) do
+    noctalia.runAsync({ "noctalia", "msg", "config-get", "idle.behavior." .. k[1] .. ".timeout" }, function(res)
+      local secs = tonumber(noctalia.string.trim(res.stdout or ""))
+      if secs then idle[k[2]] = math.floor(secs / 60 + 0.5); render() end
+    end)
+  end
   py({ "brightness", "get" }, function(res)
     brightness = tonumber(noctalia.string.trim(res.stdout or ""))
     render()
@@ -59,6 +71,14 @@ local function apply(patch)
     end
     load()
   end)
+end
+
+local function minutesLabel(m)
+  return m == 0 and "Never" or (m .. " min")
+end
+
+local function setIdle(name, minutes)
+  noctalia.runAsync({ "noctalia", "msg", "config-set", "idle.behavior." .. name .. ".timeout", tostring(minutes * 60) }, function() end)
 end
 
 local function resolutions(d)
@@ -194,12 +214,62 @@ render = function()
       })))
     end
 
+    table.insert(kids, labelRow("VRR", ui.button({ text = d.vrr and "On" or "Off", controlSize = "sm",
+      variant = d.vrr and "primary" or "ghost", onClick = function() apply({ vrr = not d.vrr }) end })))
+
+    if #data.displays > 1 then
+      local others, otherNames = {}, {}
+      for _, o in ipairs(data.displays) do
+        if o.name ~= d.name then
+          table.insert(others, o)
+          table.insert(otherNames, o.name)
+        end
+      end
+      if arrangeIdx >= #others then arrangeIdx = 0 end
+      local ref = others[arrangeIdx + 1]
+      table.insert(kids, ui.separator({}))
+      table.insert(kids, ui.label({ text = "Arrange " .. d.name .. " relative to", fontSize = 12, color = "on_surface_variant" }))
+      table.insert(kids, ui.select({ options = otherNames, selectedIndex = arrangeIdx, controlSize = "sm",
+        onChange = function(v) arrangeIdx = tonumber(v) or 0 end }))
+      local sides = { { "Left of", "left" }, { "Right of", "right" }, { "Above", "above" }, { "Below", "below" } }
+      local btns = {}
+      for _, sd in ipairs(sides) do
+        table.insert(btns, ui.button({ text = sd[1], controlSize = "sm", onClick = function()
+          py({ "arrange", d.name, ref.name, sd[2] }, function() deadline = noctalia.nowMs() + (data.revert_seconds or 15) * 1000; noctalia.setUpdateInterval(1000); load() end)
+        end }))
+      end
+      table.insert(kids, ui.row({ gap = 6 }, btns))
+    end
+
     if #data.displays > 1 then
       table.insert(kids, ui.button({ text = "Turn off this display", controlSize = "sm", onClick = function()
         apply({ enabled = false })
       end }))
     end
   end
+
+  -- Power: screen-off and screensaver delays
+  table.insert(kids, ui.separator({}))
+  local offNames, saverNames = {}, {}
+  for _, m in ipairs(OFF_CHOICES) do table.insert(offNames, minutesLabel(m)) end
+  for _, m in ipairs(SAVER_CHOICES) do table.insert(saverNames, minutesLabel(m)) end
+  table.insert(kids, labelRow("Screen off", ui.select({ options = offNames, flexGrow = 1, controlSize = "sm",
+    selectedIndex = indexOf(OFF_CHOICES, function(m) return m == idle.off end),
+    onChange = function(v)
+      local m = OFF_CHOICES[(tonumber(v) or 0) + 1]
+      idle.off = m
+      setIdle("screen-off", m)
+    end })))
+  table.insert(kids, labelRow("Screensaver", ui.select({ options = saverNames, flexGrow = 1, controlSize = "sm",
+    selectedIndex = indexOf(SAVER_CHOICES, function(m) return m == idle.saver end),
+    onChange = function(v)
+      local m = SAVER_CHOICES[(tonumber(v) or 0) + 1]
+      idle.saver = m
+      setIdle("screensaver", m)
+    end })))
+  table.insert(kids, ui.button({ text = "Forget saved layout", variant = "ghost", controlSize = "sm", onClick = function()
+    py({ "forget" }, function() message = "Saved layout forgotten (applies on next login)."; load() end)
+  end }))
 
   if message ~= "" then
     table.insert(kids, ui.label({ text = message, fontSize = 12, color = "error", maxLines = 4 }))

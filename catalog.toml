@@ -13,4 +13,4 @@ description  = "auggbar's scoreboard, RunViking CPU runner, CachyOS updater and 
 deprecated   = false
 plugin_api   = 42
 tags         = ["bar", "sports", "scores", "cpu", "updates", "fun"]
-dependencies = ["python", "pacman-contrib", "wlr-randr"]
+dependencies = ["python", "pacman-contrib", "wlr-randr", "libgpiod", "v4l-utils"]
