@@ -32,7 +32,7 @@ Singleton {
     property color barActive: "#f7768e"
 
     property int barHeight: 34
-    property int radius: 8
+    property int radius: 9
     property int pad: 12
     // Text uses the desktop sans (the same face Noctalia uses); the Nerd Font
     // stays available as the glyph face and as the fallback for icon codepoints.
@@ -47,7 +47,7 @@ Singleton {
     readonly property color cardFill: t.surfaceHigh
     readonly property color cardBorder: t.outlineVariant
     readonly property color popupBorder: t.outlineVariant
-    property int popupRadius: 8
+    property int popupRadius: 9
     readonly property color textMuted: Qt.rgba(t.barText.r, t.barText.g, t.barText.b, 0.6)
     readonly property color accentSoft: Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.16)
 

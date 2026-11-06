@@ -1,15 +1,6 @@
 # auggbar
 
-> **On niri + Noctalia?** This repo is also a Noctalia plugin source. The
-> scoreboard, RunViking and updater live in [`auggbar/`](auggbar/) as Noctalia
-> widgets, and everything else auggbar did maps to Noctalia's built-in widgets:
->
-> ```sh
-> noctalia msg plugins source add auggbar git https://github.com/auggnation/auggbar
-> noctalia msg plugins enable auggnation/auggbar
-> ```
->
-> See [`auggbar/README.md`](auggbar/README.md). The Quickshell bar below is for Hyprland.
+A Quickshell bar and desktop shell for Hyprland: bar, app launcher, notifications and clipboard history, with a wallpaper-driven theme.
 
 A single Quickshell top bar for Hyprland, made of plugins that can each be
 turned on/off, moved, and configured from the bar itself.
