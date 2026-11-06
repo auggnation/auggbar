@@ -22,7 +22,7 @@ Singleton {
     property color barText: "#a9b1d6"
     property color barActive: "#f7768e"
 
-    property int barHeight: 26
+    property int barHeight: 34
     property int radius: 10
     property int pad: 12
     property string fontFamily: "JetBrainsMono Nerd Font"

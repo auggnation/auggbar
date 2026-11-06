@@ -2778,24 +2778,20 @@ ShellRoot {
             required property var modelData
             screen: modelData
             anchors { top: true; left: true; right: true }
+            // Floating bar like the Noctalia one: 3 px off the top, inset ends, rounded.
+            margins { top: 3; left: 48; right: 48 }
             exclusiveZone: theme.barHeight
             implicitHeight: theme.barHeight
-            color: theme.barBackground
+            color: "transparent"
             WlrLayershell.layer: WlrLayer.Top
             WlrLayershell.namespace: "quickshell-bar"
 
-            // Subtle vertical sheen + accent hairline so the bar reads less flat.
             Rectangle {
                 anchors.fill: parent
-                gradient: Gradient {
-                    GradientStop { position: 0.0; color: Qt.rgba(theme.accent.r, theme.accent.g, theme.accent.b, 0.06) }
-                    GradientStop { position: 1.0; color: "transparent" }
-                }
-            }
-            Rectangle {
-                anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-                height: 1
-                color: Qt.rgba(theme.accent.r, theme.accent.g, theme.accent.b, 0.28)
+                radius: theme.barHeight / 2
+                color: Qt.rgba(theme.barBackground.r, theme.barBackground.g, theme.barBackground.b, 0.88)
+                border.width: 1
+                border.color: Qt.rgba(theme.accent.r, theme.accent.g, theme.accent.b, 0.22)
             }
 
             // Widgets come from ~/.config/auggbar/settings.json (see
@@ -2803,8 +2799,8 @@ ShellRoot {
             // center-left hangs off its left edge, center-right off its right.
             Item {
                 anchors.fill: parent
-                anchors.leftMargin: 8
-                anchors.rightMargin: 8
+                anchors.leftMargin: 14
+                anchors.rightMargin: 14
 
                 // Empty bar space: right-click / Alt+click opens the plugin
                 // menu. Plain left-clicks fall through.

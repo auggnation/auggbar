@@ -9,6 +9,11 @@
 # path, and the toggle is only sent once the daemon is actually up.
 set -u
 
+# Preferred: Noctalia's launcher (the one used day to day).
+if command -v noctalia >/dev/null 2>&1 && pgrep -x noctalia >/dev/null 2>&1; then
+    exec noctalia msg panel-toggle launcher
+fi
+
 LAUNCHER="/usr/bin/hyprlauncher"
 
 export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"
