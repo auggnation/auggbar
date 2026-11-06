@@ -823,6 +823,22 @@ ShellRoot {
     property bool netOpen: false
     property bool sndOpen: false
     property int netRevision: 0
+    // The Wi-Fi list the panel shows. It is only replaced when the networks
+    // really change (names, state, coarse signal), so rows and the passphrase
+    // box are not torn down by every background refresh.
+    property var wifiList: []
+    property string wifiSig: ""
+    onNetRevisionChanged: root.updateWifiList()
+    function updateWifiList() {
+        if (root.wifiTarget) return                 // entering a passphrase: leave the list alone
+        var arr = root.wifiNetworks()
+        var sig = arr.map(function (n) {
+            return [n.name, n.connected ? 1 : 0, n.known ? 1 : 0, n.security, Math.round(root.wifiPct(n) / 15)].join("~")
+        }).join("|")
+        if (sig === root.wifiSig) return
+        root.wifiSig = sig
+        root.wifiList = arr
+    }
     property var audioState: ({ sinks: [], sources: [], streams: [], default_sink: null, default_source: null })
     property var wifiTarget: null
     property string wifiPsk: ""
@@ -888,11 +904,11 @@ ShellRoot {
         onTriggered: root.refreshAudio()
     }
     Timer {
-        interval: 4000
-        running: root.netOpen
+        interval: 10000
+        running: root.netOpen && !root.wifiTarget       // paused while a passphrase is being typed
         repeat: true
         triggeredOnStart: true
-        onTriggered: { root.netRevision++; root.wifiNmRefreshNow() }
+        onTriggered: root.wifiNmRefreshNow()
     }
 
     function refreshAudio() { if (!audioProc.running) audioProc.running = true }
@@ -4165,7 +4181,7 @@ ShellRoot {
 
                     Text {
                         width: parent.width
-                        visible: root.wifiNetworks().length === 0
+                        visible: root.wifiList.length === 0
                         text: !Networking.wifiEnabled ? "Wi-Fi is off" : (root.wifiScanning ? "Scanning\u2026" : "No networks listed. Press Scan to look for networks.")
                         color: theme.textMuted
                         font.family: theme.fontFamily
@@ -4173,7 +4189,7 @@ ShellRoot {
                     }
 
                     Repeater {
-                        model: { root.netRevision; return root.wifiNetworks() }
+                        model: root.wifiList
                         delegate: Column {
                             required property var modelData
                             width: netCol.width
