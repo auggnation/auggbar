@@ -226,7 +226,7 @@ local function setup()
         loadStatus()
       end)
     end }),
-    ui.button({ text = "Sign in with Google", variant = "primary", controlSize = "sm", disabled = not status.configured, onClick = function()
+    ui.button({ text = "Sign in with Google", variant = "primary", controlSize = "sm", onClick = function()
       message = "Finish signing in in your browser…"
       render()
       gcal({ "login" }, function(doc)
