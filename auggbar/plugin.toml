@@ -10,9 +10,9 @@ plugin_api = 42
 author = "auggnation"
 license = "MIT"
 icon = "layout-navbar"
-description = "auggbar's scoreboard, RunViking CPU runner, CachyOS updater and display settings as Noctalia bar widgets."
+description = "auggbar's scoreboard, RunViking CPU runner, CachyOS updater, sound, calendar and display settings as Noctalia bar widgets and panels."
 tags = ["bar", "sports", "scores", "cpu", "updates", "fun"]
-dependencies = ["python", "pacman-contrib", "wlr-randr", "libgpiod", "v4l-utils"]
+dependencies = ["python", "pacman-contrib", "wlr-randr", "libgpiod", "v4l-utils", "wireplumber"]
 
 # ── Scoreboard ────────────────────────────────────────────────────────────
 # A service fetches ESPN scores (python backend in scoreboard/, config in
@@ -142,5 +142,37 @@ entry = "display_panel.luau"
 width = 420
 height = "content"
 max_height = 520
+placement = "attached"
+open_near_click = true
+
+# ── Sound ─────────────────────────────────────────────────────────────────
+# Default output / input, volume + mute, per-app volume (wpctl via sound/audio.py).
+
+[[widget]]
+id = "sound"
+entry = "sound_widget.luau"
+
+[[panel]]
+id = "sound"
+entry = "sound_panel.luau"
+width = 380
+height = "content"
+max_height = 640
+placement = "attached"
+open_near_click = true
+
+# ── Calendar ──────────────────────────────────────────────────────────────
+# Month grid + day agenda. iCal/webcal feeds and Google Calendar (gcal/gcal.py).
+
+[[widget]]
+id = "calendar"
+entry = "calendar_widget.luau"
+
+[[panel]]
+id = "calendar"
+entry = "calendar_panel.luau"
+width = 420
+height = "content"
+max_height = 720
 placement = "attached"
 open_near_click = true
