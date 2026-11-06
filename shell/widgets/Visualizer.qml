@@ -103,9 +103,9 @@ Rectangle {
     implicitWidth: strip.implicitWidth + 14
     implicitHeight: theme.barHeight - 6
     radius: 9
-    color: (hover.hovered || w.desktopOpen) ? theme.hoverFill : theme.cardFill
+    color: (hover.hovered || w.desktopOpen) ? theme.hoverFill : theme.pillFill
     border.width: 1
-    border.color: w.desktopOpen ? theme.accent : theme.cardBorder
+    border.color: w.desktopOpen ? theme.accent : theme.pillBorder
     Behavior on color { ColorAnimation { duration: 120 } }
 
     Row {

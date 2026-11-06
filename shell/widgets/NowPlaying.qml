@@ -17,9 +17,9 @@ Rectangle {
     implicitWidth: row.implicitWidth + 16
     implicitHeight: theme.barHeight - 6
     radius: 9
-    color: theme.cardFill
+    color: theme.pillFill
     border.width: 1
-    border.color: theme.cardBorder
+    border.color: theme.pillBorder
 
     RowLayout {
         id: row
@@ -57,7 +57,7 @@ Rectangle {
                 Text {
                     id: scroll
                     text: w.shell.npText()
-                    color: w.theme.barText
+                    color: w.theme.tones[4]
                     font.family: w.theme.fontFamily
                     font.pixelSize: w.theme.fontSize - 1
                     onTextChanged: { strip.x = 0; marquee.restart() }

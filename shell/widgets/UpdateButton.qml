@@ -45,7 +45,7 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             visible: ub.pending && ub.count > 0
             text: ub.count
-            color: theme.barText
+            color: theme.tones[7]
             font.family: theme.fontFamily
             font.pixelSize: theme.fontSize
             font.bold: true

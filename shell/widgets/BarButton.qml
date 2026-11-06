@@ -7,7 +7,8 @@ Rectangle {
     readonly property QtObject theme: Theme
     property string glyph: ""
     property string label: ""
-    property color fg: theme.barText
+    property int tone: -1
+    property color fg: tone >= 0 ? theme.tones[tone] : theme.barText
     property color glyphColor: b.fg
     property int glyphSize: 15
     property bool highlight: false

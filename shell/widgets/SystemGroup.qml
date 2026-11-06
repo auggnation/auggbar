@@ -13,9 +13,9 @@ Rectangle {
     implicitWidth: row.implicitWidth + 8
     implicitHeight: theme.barHeight - 6
     radius: 9
-    color: theme.cardFill
+    color: theme.pillFill
     border.width: 1
-    border.color: theme.cardBorder
+    border.color: theme.pillBorder
 
     Row {
         id: row

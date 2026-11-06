@@ -27,7 +27,7 @@ Row {
             Text {
                 anchors.centerIn: parent
                 text: modelData.name !== "" ? modelData.name : String(modelData.id)
-                color: act ? theme.barBackground : theme.textMuted
+                color: act ? theme.barBackground : theme.tones[4]
                 font.family: theme.fontFamily
                 font.pixelSize: 12
                 font.bold: act

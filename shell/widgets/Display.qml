@@ -3,6 +3,7 @@ import QtQuick
 // Display — monitor icon + live brightness %. Click for the displays &
 // brightness panel, scroll to change brightness.
 BarButton {
+    tone: 7
     id: w
     required property var shell
     property bool shown: true

@@ -315,6 +315,17 @@ def team_color(team, override):
     return f"#{_lighten(primary)}"
 
 
+def team_color2(team, chosen):
+    """The team's other colour (whichever of primary/alternate was not chosen)."""
+    if not isinstance(team, dict):
+        return ""
+    for k in ("color", "alternateColor"):
+        h = _hex(team.get(k))
+        if h and f"#{h}" != (chosen or "").lower():
+            return f"#{h}"
+    return ""
+
+
 def parse_team_game(path, event, cfg_favs, cfg_colors, tz):
     comp_list = event.get("competitions") or []
     if not comp_list or not comp_list[0].get("competitors"):
@@ -343,6 +354,7 @@ def parse_team_game(path, event, cfg_favs, cfg_colors, tz):
             "score": score,
             "logo": team_logo(team),
             "color": team_color(team, cfg_colors.get(key)),
+            "color2": team_color2(team, team_color(team, cfg_colors.get(key))),
             "fav": key in cfg_favs,
             "winner": c.get("winner", False),
             "home_away": homeAway,

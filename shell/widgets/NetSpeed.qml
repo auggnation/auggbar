@@ -37,7 +37,7 @@ Item {
 
         Text {
             text: ""
-            color: w.theme.textMuted
+            color: w.theme.tones[0]
             font.family: w.theme.glyphFont
             font.pixelSize: w.pixel
             anchors.verticalCenter: parent.verticalCenter
@@ -45,7 +45,7 @@ Item {
         Item { width: w.arrowGap; height: 1 }
         Text {
             text: w.shell.fmtBpsFixed(w.shell.netDown)
-            color: w.theme.textMuted
+            color: w.theme.tones[0]
             font.family: w.theme.fontFamily
             font.pixelSize: w.pixel
             anchors.verticalCenter: parent.verticalCenter
@@ -53,7 +53,7 @@ Item {
         Item { width: valueMetrics.advanceWidth(" "); height: 1 }
         Text {
             text: ""
-            color: w.theme.textMuted
+            color: w.theme.tones[0]
             font.family: w.theme.glyphFont
             font.pixelSize: w.pixel
             anchors.verticalCenter: parent.verticalCenter
@@ -61,7 +61,7 @@ Item {
         Item { width: w.arrowGap; height: 1 }
         Text {
             text: w.shell.fmtBpsFixed(w.shell.netUp)
-            color: w.theme.textMuted
+            color: w.theme.tones[0]
             font.family: w.theme.fontFamily
             font.pixelSize: w.pixel
             anchors.verticalCenter: parent.verticalCenter

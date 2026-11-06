@@ -3,6 +3,7 @@ import QtQuick
 // Audio — output volume. Click for the sound panel, middle-click to mute,
 // scroll to change volume.
 BarButton {
+    tone: 2
     required property var shell
     property bool shown: true
     readonly property var settingsSchema: [
@@ -12,6 +13,6 @@ BarButton {
     glyph: shell.volGlyph(); glyphSize: 15
     highlight: shell.sndOpen
     onClicked: shell.openSnd()
-    onMiddleClicked: { shell.run("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"); shell.volRefreshSoon() }
-    onScrolled: function (d) { shell.run("wpctl set-volume @DEFAULT_AUDIO_SINK@ " + (d > 0 ? step + "%+" : step + "%-")); shell.volRefreshSoon() }
+    onMiddleClicked: { shell.run("auggment-vol mute"); shell.volRefreshSoon() }
+    onScrolled: function (d) { shell.run("auggment-vol " + (d > 0 ? "up " : "down ") + step); shell.volRefreshSoon() }
 }

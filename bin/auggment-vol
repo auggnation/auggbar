@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# auggment-vol — volume control that targets the real output device.
+# With EasyEffects the default sink is the virtual easyeffects_sink, whose
+# volume does not change what you hear; the speaker behind it does.
+# Usage: auggment-vol get|up N|down N|mute|unmute
+default=$(pactl get-default-sink 2>/dev/null)
+sink=$default
+if [ "$default" = "easyeffects_sink" ] || [ -z "$default" ]; then
+  sink=$(sed -n 's/^outputDevice=//p' "$HOME/.config/easyeffects/db/easyeffectsrc" 2>/dev/null | head -1)
+  pactl list short sinks | awk '{print $2}' | grep -qx "$sink" || \
+    sink=$(pactl list short sinks | awk '$2!="easyeffects_sink"{print $2; exit}')
+fi
+case "$1" in
+  get)
+    v=$(pactl get-sink-volume "$sink" | grep -o '[0-9]*%' | head -1 | tr -d %)
+    m=$(pactl get-sink-mute "$sink" | awk '{print $2}')
+    printf 'Volume: %s%s\n' "$(awk -v v="${v:-0}" 'BEGIN{printf "%.2f", v/100}')" "$([ "$m" = yes ] && echo ' [MUTED]')" ;;
+  up)   pactl set-sink-mute "$sink" 0; pactl set-sink-volume "$sink" "+${2:-5}%" ;;
+  down) pactl set-sink-volume "$sink" "-${2:-5}%" ;;
+  mute) pactl set-sink-mute "$sink" toggle ;;
+  unmute) pactl set-sink-mute "$sink" 0 ;;
+esac

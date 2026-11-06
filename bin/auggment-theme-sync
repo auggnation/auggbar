@@ -111,6 +111,33 @@ def average_colour(image):
     return None
 
 
+def top_strip_colour(image):
+    """Average colour of the strip of wallpaper the bar sits over."""
+    for tool in ("magick", "convert"):
+        try:
+            out = subprocess.run([tool, image, "-gravity", "north", "-crop", "100%x6%+0+0",
+                                  "+repage", "-resize", "1x1!", "-format", "%[hex:u]", "info:"],
+                                 capture_output=True, text=True, timeout=20)
+        except Exception:
+            continue
+        hexv = out.stdout.strip().lstrip("#").lower()
+        if len(hexv) >= 6:
+            return hexv[:6]
+    return None
+
+
+def bar_tint(hexv, accent):
+    """Bar glass colour: the wallpaper's own colour behind the bar, a touch
+    darker so text reads, keeping its hue so the bar looks see-through."""
+    import colorsys
+    r, g, b = (int(hexv[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    h, sat, v = colorsys.rgb_to_hsv(r, g, b)
+    if sat < 0.15:  # grey strip: borrow the wallpaper accent hue so the bar has colour
+        ar, ag, ab = (int(accent.lstrip("#")[i:i + 2], 16) / 255 for i in (0, 2, 4))
+        h = colorsys.rgb_to_hsv(ar, ag, ab)[0]
+    return hsv(h, max(0.40, min(0.80, sat * 1.3 + 0.12)), max(0.22, min(0.50, v * 0.7)))
+
+
 def _dust(c, keys, sat=0.80, val=0.93):
     """Grunge pass: knock the saturation and brightness down so colours read as
     worn / oxidised instead of neon."""
@@ -220,6 +247,7 @@ def write_palette(c):
              'muted = "%s"' % c["muted"],
              'urgent = "%s"' % c["urgent"],
              'panel = "%s"' % c["panel"],
+             'bar = "%s"' % c.get("bar", c["panel"]),
              'surface_high = "%s"' % c["surface_high"],
              'surface_highest = "%s"' % c["surface_highest"],
              'outline = "%s"' % c["outline"],
@@ -768,6 +796,8 @@ def main():
         return 1
     mode = read_mode()
     c = build(hexv, mode)
+    strip = top_strip_colour(image)
+    c["bar"] = bar_tint(strip, c["accent"]) if strip else c["panel"]
     write_palette(c)
     write_colors_toml(c, mode)
     write_terminals(c, mode)

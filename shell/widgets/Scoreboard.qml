@@ -20,9 +20,9 @@ Rectangle {
     implicitHeight: theme.barHeight - 8
     implicitWidth: row.implicitWidth + 18
     radius: theme.radius
-    color: (hover.hovered || shell.sbOpen) ? theme.hoverFill : Qt.rgba(w.tone.r, w.tone.g, w.tone.b, 0.14)
+    color: (hover.hovered || shell.sbOpen) ? theme.hoverFill : theme.pillFill
     border.width: 1
-    border.color: Qt.rgba(w.tone.r, w.tone.g, w.tone.b, 0.45)
+    border.color: theme.pillBorder
     Behavior on color { ColorAnimation { duration: 120 } }
 
     function side(s) { return (w.cur && w.cur[s]) ? w.cur[s] : null }
@@ -47,7 +47,7 @@ Rectangle {
             visible: w.isGame
             anchors.verticalCenter: parent.verticalCenter
             text: (w.side("away") && w.side("away").abbr) ? w.side("away").abbr : "?"
-            color: w.shell.sbTeamColor(w.shell.sbTeamKey(w.cur, "away"), w.side("away") ? w.side("away").color : w.theme.barText)
+            color: w.theme.readableOnBar(w.shell.sbTeamColor(w.shell.sbTeamKey(w.cur, "away"), w.side("away") ? w.side("away").color : ""), w.side("away") ? w.side("away").color2 : "", w.theme.tones[5])
             font.family: w.theme.fontFamily
             font.pixelSize: w.theme.fontSize
             font.bold: true
@@ -72,7 +72,7 @@ Rectangle {
             visible: w.isGame
             anchors.verticalCenter: parent.verticalCenter
             text: (w.side("home") && w.side("home").abbr) ? w.side("home").abbr : "?"
-            color: w.shell.sbTeamColor(w.shell.sbTeamKey(w.cur, "home"), w.side("home") ? w.side("home").color : w.theme.barText)
+            color: w.theme.readableOnBar(w.shell.sbTeamColor(w.shell.sbTeamKey(w.cur, "home"), w.side("home") ? w.side("home").color : ""), w.side("home") ? w.side("home").color2 : "", w.theme.tones[5])
             font.family: w.theme.fontFamily
             font.pixelSize: w.theme.fontSize
             font.bold: true

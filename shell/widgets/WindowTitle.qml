@@ -14,7 +14,7 @@ Text {
     width: Math.min(implicitWidth, shell.barOpt("title", "maxWidth", 420))
     elide: Text.ElideRight
     text: Hyprland.activeToplevel ? (Hyprland.activeToplevel.title || "") : ""
-    color: theme.textMuted
+    color: theme.tones[5]
     font.family: theme.fontFamily
     font.pixelSize: theme.fontSize
 }

@@ -2,6 +2,7 @@ import QtQuick
 
 // Network — wifi/ethernet glyph; click for the network panel.
 BarButton {
+    tone: 1
     required property var shell
     property bool shown: true
     glyph: shell.netGlyph(); glyphSize: 15

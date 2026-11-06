@@ -14,9 +14,9 @@ Rectangle {
     implicitHeight: theme.barHeight - 6
     implicitWidth: row.implicitWidth + 18
     radius: theme.radius
-    color: w.active ? theme.hoverFill : theme.cardFill
+    color: w.active ? theme.hoverFill : theme.pillFill
     border.width: 1
-    border.color: w.active ? theme.accent : theme.cardBorder
+    border.color: w.active ? theme.accent : theme.pillBorder
     Behavior on color { ColorAnimation { duration: 120 } }
     Behavior on border.color { ColorAnimation { duration: 120 } }
 
@@ -27,14 +27,14 @@ Rectangle {
         Text {
             anchors.verticalCenter: parent.verticalCenter
             text: w.shell.wxTemp
-            color: theme.barText
+            color: theme.tones[2]
             font.family: theme.fontFamily
             font.pixelSize: theme.fontSize
         }
         Text {
             anchors.verticalCenter: parent.verticalCenter
             text: w.shell.wxIcon
-            color: theme.accent
+            color: theme.tones[3]
             font.family: theme.fontFamily
             font.pixelSize: 15
         }

@@ -2,6 +2,7 @@ import QtQuick
 
 // Battery — charge glyph + percentage.
 BarButton {
+    tone: 5
     required property var shell
     property bool shown: true
     readonly property var settingsSchema: [

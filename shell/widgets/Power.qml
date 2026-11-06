@@ -11,15 +11,15 @@ Rectangle {
     implicitWidth: glyph.implicitWidth + 24
     implicitHeight: theme.barHeight - 6
     radius: 9
-    color: (hover.hovered || shell.powerOpen) ? theme.hoverFill : theme.cardFill
+    color: (hover.hovered || shell.powerOpen) ? theme.hoverFill : theme.pillFill
     border.width: 1
-    border.color: shell.powerOpen ? theme.accent : theme.cardBorder
+    border.color: shell.powerOpen ? theme.accent : theme.pillBorder
     Behavior on color { ColorAnimation { duration: 120 } }
     Text {
         id: glyph
         anchors.centerIn: parent
         text: ""
-        color: w.shell.powerOpen ? theme.accent : theme.barText
+        color: w.shell.powerOpen ? theme.accent : theme.tones[6]
         font.family: theme.fontFamily
         font.pixelSize: 15
     }

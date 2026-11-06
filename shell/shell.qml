@@ -614,7 +614,7 @@ ShellRoot {
 
     Process {
         id: sinkProc
-        command: ["bash", "-lc", "wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null"]
+        command: ["bash", "-lc", "" + root.home + "/.local/bin/auggment-vol get 2>/dev/null"]
         stdout: StdioCollector { onStreamFinished: root.parseSink(this.text) }
     }
     Process {
@@ -712,18 +712,18 @@ ShellRoot {
 
     function volumeUp() {
         // Raising the volume always clears mute (the usual desktop behaviour).
-        root.run("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+ && wpctl set-mute @DEFAULT_AUDIO_SINK@ 0")
+        root.run("auggment-vol up 5")
         root.sinkMuted = false
         root.sinkVolume = Math.min(1.5, root.sinkVolume + 0.05)
         root.showOsd("volume")
     }
     function volumeDown() {
-        root.run("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-")
+        root.run("auggment-vol down 5")
         root.sinkVolume = Math.max(0, root.sinkVolume - 0.05)
         root.showOsd("volume")
     }
     function volumeMute() {
-        root.run("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle")
+        root.run("auggment-vol mute")
         root.sinkMuted = !root.sinkMuted
         root.showOsd("volume")
     }

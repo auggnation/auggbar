@@ -18,6 +18,10 @@ Item {
         id: strip
         property color tint: "white"
         anchors.fill: parent
+        // MultiEffect blends the white mask toward the colour by the colour's
+        // alpha (washed-out grey); so tint with an opaque colour and fade the
+        // whole strip instead.
+        opacity: strip.tint.a
 
         Item {
             id: mask
@@ -47,18 +51,18 @@ Item {
             anchors.fill: mask
             source: mask
             colorization: 1.0
-            colorizationColor: strip.tint
+            colorizationColor: Qt.rgba(strip.tint.r, strip.tint.g, strip.tint.b, 1)
         }
     }
 
     // misregistered "ghost" print, offset down-left
     Strip {
         x: -1.5; y: 1.5
-        tint: Qt.rgba(root.theme.accent.r, root.theme.accent.g, root.theme.accent.b, 0.30)
+        tint: Qt.rgba(root.theme.barTint.r, root.theme.barTint.g, root.theme.barTint.b, 0.35 * root.theme.barOpacity)
     }
     // the paint itself
     Strip {
-        tint: Qt.rgba(root.theme.panelBackground.r, root.theme.panelBackground.g, root.theme.panelBackground.b, 0.99)
+        tint: Qt.rgba(root.theme.barTint.r, root.theme.barTint.g, root.theme.barTint.b, root.theme.barOpacity)
     }
 
     // a second, faint pass of grain so the fill is not flat
@@ -78,13 +82,15 @@ Item {
             width: img.width; height: img.height
             source: img
             colorization: 1.0
-            colorizationColor: Qt.rgba(0, 0, 0, 0.35)
+            colorizationColor: "black"
+            opacity: 0.35
         }
         MultiEffect {
             width: img.width; height: img.height
             source: img
             colorization: 1.0
-            colorizationColor: Qt.rgba(root.theme.foreground.r * 0.9, root.theme.foreground.g * 0.85, root.theme.foreground.b * 0.7, 0.62)
+            colorizationColor: Qt.rgba(root.theme.foreground.r * 0.9, root.theme.foreground.g * 0.85, root.theme.foreground.b * 0.7, 1)
+            opacity: 0.62
         }
     }
     Tape { x: 26; y: -9; src: "tape-a.png"; tilt: -9 }

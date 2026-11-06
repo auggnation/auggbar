@@ -22,9 +22,9 @@ Rectangle {
     implicitWidth: row.implicitWidth + 24
     implicitHeight: theme.barHeight - 6
     radius: 9
-    color: (hover.hovered || w.open) ? theme.hoverFill : theme.cardFill
+    color: (hover.hovered || w.open) ? theme.hoverFill : theme.pillFill
     border.width: 1
-    border.color: w.open ? theme.accent : theme.cardBorder
+    border.color: w.open ? theme.accent : theme.pillBorder
     Behavior on color { ColorAnimation { duration: 120 } }
 
     SystemClock { id: clock; precision: SystemClock.Minutes }
@@ -37,7 +37,7 @@ Rectangle {
             visible: w.showDate
             anchors.verticalCenter: parent.verticalCenter
             text: Qt.formatDateTime(clock.date, "ddd d MMM")
-            color: theme.textMuted
+            color: theme.tones[1]
             font.family: theme.fontFamily
             font.pixelSize: theme.fontSize
         }
@@ -50,7 +50,7 @@ Rectangle {
         Text {
             anchors.verticalCenter: parent.verticalCenter
             text: Qt.formatDateTime(clock.date, w.use24h ? "HH:mm" : "h:mm AP")
-            color: theme.accent
+            color: theme.tones[0]
             font.family: theme.fontFamily
             font.pixelSize: theme.fontSize + 2
             font.bold: true

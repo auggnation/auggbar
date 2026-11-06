@@ -27,6 +27,8 @@ Singleton {
     property color outlineVariant: "#453e3d"
     property color textOnAccent: "#1a1b26"
 
+    // Wallpaper colour behind the bar (palette.toml "bar"), drawn at barOpacity.
+    property color barTint: "#2a2622"
     property color barBackground: "#1a1b26"
     property color barText: "#a9b1d6"
     property color barActive: "#f7768e"
@@ -50,6 +52,33 @@ Singleton {
     property int popupRadius: 9
     readonly property color textMuted: Qt.rgba(t.barText.r, t.barText.g, t.barText.b, 0.6)
     readonly property color accentSoft: Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.16)
+
+    // Bar backdrop: the wallpaper-derived panel colour at 60% total opacity.
+    readonly property real barOpacity: 0.88
+    // Widgets sit directly on the bar: same backdrop, no separate pill.
+    readonly property color pillFill: "transparent"
+    readonly property color pillBorder: "transparent"
+    // One text colour per widget, all rotated from the wallpaper accent so the
+    // set changes with the background. Kept light enough to read on the dark bar.
+    readonly property var tones: {
+        var h = t.accent.hslHue < 0 ? 0 : t.accent.hslHue
+        var s = Math.max(0.38, Math.min(0.72, t.accent.hslSaturation))
+        var out = []
+        for (var i = 0; i < 8; i++) out.push(Qt.hsla((h + i * 0.125) % 1, s, 0.74, 1))
+        return out
+    }
+    function colorDist(a, b) {
+        var c = Qt.color(a), d = Qt.color(b)
+        return Math.sqrt(Math.pow(c.r - d.r, 2) + Math.pow(c.g - d.g, 2) + Math.pow(c.b - d.b, 2))
+    }
+    // Team colour for text on the bar: the primary unless it blends into the
+    // background, then the secondary, then a palette tone.
+    function readableOnBar(primary, secondary, fallback) {
+        var bg = t.panelBackground
+        if (primary && t.colorDist(primary, bg) > 0.38) return primary
+        if (secondary && t.colorDist(secondary, bg) > 0.38) return secondary
+        return fallback || t.barText
+    }
 
     function keyVal(line) {
         var m = String(line).match(/^\s*([A-Za-z0-9_-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s#]+))/)
@@ -105,6 +134,7 @@ Singleton {
             else if (kv.k === "muted") t.muted = kv.v
             else if (kv.k === "urgent") t.urgent = kv.v
             else if (kv.k === "panel") t.panelBackground = kv.v
+            else if (kv.k === "bar") t.barTint = kv.v
             else if (kv.k === "surface_high") t.surfaceHigh = kv.v
             else if (kv.k === "surface_highest") t.surfaceHighest = kv.v
             else if (kv.k === "outline") t.outlineVariant = kv.v

@@ -7,6 +7,7 @@ import Quickshell.Io
 // the app gets no picture. State comes from /run/auggment/privacy.json
 // (auggment-privacy-switches.service: cam_in_use + the webcam's privacy switch).
 BarButton {
+    tone: 6
     id: w
     required property var shell
     readonly property var settingsSchema: [
@@ -19,7 +20,7 @@ BarButton {
 
     glyph: ""                   // Font Awesome video camera
     glyphSize: 14
-    glyphColor: live ? theme.accent : theme.urgent
+    glyphColor: live ? fg : theme.urgent
 
     // Struck through whenever the camera is not live.
     Rectangle {
