@@ -153,7 +153,7 @@ id = "sound"
 entry = "sound_widget.luau"
 
 [[panel]]
-id = "sound"
+id = "soundpanel"
 entry = "sound_panel.luau"
 width = 380
 height = "content"
@@ -169,7 +169,7 @@ id = "calendar"
 entry = "calendar_widget.luau"
 
 [[panel]]
-id = "calendar"
+id = "calendarpanel"
 entry = "calendar_panel.luau"
 width = 420
 height = "content"

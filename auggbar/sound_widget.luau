@@ -36,7 +36,7 @@ function update()
 end
 
 function onClick()
-  noctalia.togglePanel("auggnation/auggbar:sound")
+  noctalia.togglePanel("auggnation/auggbar:soundpanel")
 end
 
 function onRightClick()

@@ -21,7 +21,7 @@ function update()
 end
 
 function onClick()
-  noctalia.togglePanel("auggnation/auggbar:calendar")
+  noctalia.togglePanel("auggnation/auggbar:calendarpanel")
 end
 
 refresh()
