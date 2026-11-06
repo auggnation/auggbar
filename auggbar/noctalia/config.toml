@@ -92,6 +92,7 @@ type = "audio_visualizer"
 
 # ── Bar layout, in auggbar's order ──────────────────────────────────────────
 [bar.default]
+margin_edge = 3              # keep the bar at least 3 px off the top of the screen
 margin_ends = 48             # still floats, a bit more room for widgets
 start  = ["launcher", "weather", "workspaces", "active_window"]
 center = ["visualizer", "clock", "media"]
