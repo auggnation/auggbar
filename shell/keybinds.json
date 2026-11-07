@@ -1,0 +1,63 @@
+[
+  { "group": "Open things", "rows": [
+    ["Super + Space", "App launcher"],
+    ["Super + D", "App launcher"],
+    ["Super + V", "Clipboard history"],
+    ["Super + Return", "Terminal (Ghostty)"],
+    ["Super + B", "Browser (Falkon)"],
+    ["Super + Shift + Alt + B", "Private browser window"],
+    ["Super + E", "Files (Nautilus)"],
+    ["Super + M", "System monitor (btop)"],
+    ["Super + O", "OpenCode"],
+    ["Super + Shift + O", "Obsidian"],
+    ["Super + Shift + /", "KeePassXC"],
+    ["Super + G", "Screensaver"]
+  ]},
+  { "group": "Websites", "rows": [
+    ["Super + Shift + Y", "YouTube"],
+    ["Super + Shift + X", "X"],
+    ["Super + Shift + A", "ChatGPT"],
+    ["Super + Shift + C", "Calendar (Hey)"],
+    ["Super + Shift + S", "Maps"]
+  ]},
+  { "group": "Bar panels", "rows": [
+    ["Super + F1", "This keybinds list"],
+    ["Super + S", "Sound and EasyEffects"],
+    ["Super + Ctrl + C", "Calendar"],
+    ["Super + Ctrl + D", "Display settings"],
+    ["Super + Ctrl + S", "Bar plugin settings"],
+    ["Super + Shift + Q", "Power menu"]
+  ]},
+  { "group": "Windows", "rows": [
+    ["Super + Q  /  Super + W", "Close window"],
+    ["Super + F", "Fullscreen"],
+    ["Super + Ctrl + F", "Maximize"],
+    ["Super + Alt + F", "Fake fullscreen"],
+    ["Super + T  /  Super + /", "Float or tile"],
+    ["Super + P", "Pseudo-tile"],
+    ["Super + Shift + P", "Pin window"],
+    ["Super + Shift + T", "Toggle split direction"],
+    ["Super + Arrows or H J K L", "Move focus"],
+    ["Super + Ctrl + Arrows or H J K L", "Move window"],
+    ["Super + - / =", "Resize width"],
+    ["Super + Shift + - / =", "Resize height"],
+    ["Super + left-drag", "Move window with the mouse"],
+    ["Super + right-drag", "Resize window with the mouse"]
+  ]},
+  { "group": "Workspaces", "rows": [
+    ["Super + 1 … 0", "Go to workspace"],
+    ["Super + Shift + 1 … 0", "Send window to workspace"],
+    ["Super + Tab", "Next workspace"],
+    ["Super + Shift + Tab", "Previous workspace"]
+  ]},
+  { "group": "System", "rows": [
+    ["Super + Alt + L", "Lock screen"],
+    ["Super + Alt + W", "New wallpaper now (and recolour)"],
+    ["Print  /  Ctrl + Shift + 1", "Screenshot a region"],
+    ["Alt + Print  /  Ctrl + Shift + 2", "Screenshot the whole screen"],
+    ["Volume keys", "Volume up, down, mute"],
+    ["Brightness keys", "Screen brightness"],
+    ["Mic key", "Mute the microphone"],
+    ["Play / Prev / Next keys", "Media controls"]
+  ]}
+]

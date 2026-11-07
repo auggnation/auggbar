@@ -28,6 +28,8 @@ ShellRoot {
     property bool sbOpen: false
     property bool sbSetOpen: false
     property bool powerOpen: false
+    property bool keybindsOpen: false
+    property var keybindsData: []
 
     // The launcher plugin (components/LauncherButton.qml). Kept here so the
     // "launcher" IPC target can drive the very same button.
@@ -905,6 +907,7 @@ ShellRoot {
         root.netOpen = false
         root.sndOpen = false
         root.powerOpen = false
+        root.keybindsOpen = false
         root.wxOpen = false
         root.wxSetOpen = false
         root.btOpen = false
@@ -913,6 +916,19 @@ ShellRoot {
         root.calAuthOpen = false
         root.barSetOpen = false
         root.pluginSetOpen = false
+    }
+    function toggleKeybinds() {
+        var was = root.keybindsOpen
+        root.closePanels()
+        root.keybindsOpen = !was
+    }
+    FileView {
+        id: keybindsFile
+        path: root.home + "/.config/quickshell/keybinds.json"
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: { try { root.keybindsData = JSON.parse(text()) } catch (e) { console.warn("auggbar: keybinds.json: " + e) } }
     }
     function openNet() {
         var was = root.netOpen
@@ -2626,7 +2642,7 @@ ShellRoot {
     // center-right, right, system (inside the grouped card).
     readonly property string barSettingsPath: root.home + "/.config/auggbar/settings.json"
     readonly property var barWidgetFiles: ({
-        launcher: "Launcher", weather: "Weather", workspaces: "Workspaces",
+        launcher: "Launcher", keybinds: "Keybinds", weather: "Weather", workspaces: "Workspaces",
         title: "WindowTitle", cava: "Visualizer", power: "Power", clock: "Clock",
         nowplaying: "NowPlaying", scoreboard: "Scoreboard", display: "Display",
         separator: "Separator", system: "SystemGroup", netspeed: "NetSpeed",
@@ -2634,7 +2650,7 @@ ShellRoot {
         battery: "Battery", viking: "Viking", updater: "Updater", tray: "Tray"
     })
     readonly property var barLabels: ({
-        launcher: "Launcher", weather: "Weather", workspaces: "Workspaces",
+        launcher: "Launcher", keybinds: "Keybinds", weather: "Weather", workspaces: "Workspaces",
         title: "Window title", cava: "Visualizer", power: "Power", clock: "Clock",
         nowplaying: "Now playing", scoreboard: "Scoreboard", display: "Display",
         separator: "Divider", system: "System card", netspeed: "Network speed",
@@ -2651,6 +2667,7 @@ ShellRoot {
     ]
     readonly property var barDefaults: [
         { id: "launcher",   enabled: true, section: "left",         order: 0 },
+        { id: "keybinds",   enabled: true, section: "left",         order: 0.5 },
         { id: "weather",    enabled: true, section: "left",         order: 1 },
         { id: "workspaces", enabled: true, section: "left",         order: 2 },
         { id: "title",      enabled: true, section: "left",         order: 3 },
@@ -3432,17 +3449,16 @@ ShellRoot {
         }
     }
 
-    // ------------------------------------------------------- scoreboard popup
-    // Every tracked game at once; scrolls when the list is taller than the screen.
+    // ------------------------------------------------------- keybinds popup
     PanelWindow {
-        id: sbPopup
-        visible: root.sbOpen
+        id: keybindsPopup
+        visible: root.keybindsOpen
         screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
-        anchors { top: true; right: true }
-        margins { top: theme.barHeight + 6; right: 8 }
+        anchors { top: true; left: true }
+        margins { top: theme.barHeight + 6; left: 48 }
         readonly property real maxH: (screen ? screen.height : 900) - theme.barHeight - 24
-        implicitWidth: 404
-        implicitHeight: Math.min(maxH, sbHead.implicitHeight + sbList.contentHeight + sbFoot.implicitHeight + 28 + 24)
+        implicitWidth: 520
+        implicitHeight: Math.min(maxH, kbHead.implicitHeight + kbList.contentHeight + 28 + 12)
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         focusable: true
@@ -3458,6 +3474,129 @@ ShellRoot {
             Grain {}
 
             ColumnLayout {
+                anchors { fill: parent; margins: 14 }
+                spacing: 10
+
+                RowLayout {
+                    id: kbHead
+                    Layout.fillWidth: true
+                    Text {
+                        text: "Keybinds"
+                        color: theme.barText
+                        font.family: theme.fontFamily; font.pixelSize: theme.fontSize + 2; font.bold: true
+                    }
+                    Item { Layout.fillWidth: true }
+                    Text {
+                        text: "Super = the Windows key"
+                        color: theme.textMuted
+                        font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1
+                    }
+                    Btn { glyph: "\uf00d"; glyphSize: 12; hPad: 6; onClicked: root.keybindsOpen = false }
+                }
+
+                ListView {
+                    id: kbList
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    spacing: 14
+                    model: root.keybindsData
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    delegate: Column {
+                        required property var modelData
+                        width: kbList.width - (kbList.contentHeight > kbList.height ? 10 : 0)
+                        spacing: 6
+
+                        Text {
+                            text: modelData.group
+                            color: theme.accent
+                            font.family: theme.fontFamily; font.pixelSize: theme.fontSize; font.bold: true
+                        }
+                        Repeater {
+                            model: modelData.rows
+                            delegate: RowLayout {
+                                required property var modelData
+                                width: parent ? parent.width : 0
+                                spacing: 10
+                                Flow {
+                                    Layout.preferredWidth: 250
+                                    Layout.alignment: Qt.AlignTop
+                                    spacing: 4
+                                    Repeater {
+                                        model: modelData[0].split(/\s+\+\s+|\s{2,}/)
+                                        delegate: Rectangle {
+                                            required property string modelData
+                                            radius: 5
+                                            color: modelData === "or" || modelData === "/" ? "transparent" : theme.cardFill
+                                            border.width: modelData === "or" || modelData === "/" ? 0 : 1
+                                            border.color: theme.cardBorder
+                                            implicitWidth: keyTxt.implicitWidth + 12
+                                            implicitHeight: keyTxt.implicitHeight + 4
+                                            Text {
+                                                id: keyTxt
+                                                anchors.centerIn: parent
+                                                text: modelData
+                                                color: theme.barText
+                                                font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1
+                                            }
+                                        }
+                                    }
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    Layout.alignment: Qt.AlignTop
+                                    wrapMode: Text.WordWrap
+                                    text: modelData[1]
+                                    color: theme.textMuted
+                                    font.family: theme.fontFamily; font.pixelSize: theme.fontSize
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        visible: kbList.contentHeight > kbList.height
+                        anchors.right: parent.right
+                        width: 4; radius: 2
+                        color: Qt.rgba(theme.barText.r, theme.barText.g, theme.barText.b, 0.35)
+                        y: kbList.visibleArea.yPosition * kbList.height
+                        height: Math.max(24, kbList.visibleArea.heightRatio * kbList.height)
+                    }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------- scoreboard popup
+    // Every tracked game at once; scrolls when the list is taller than the screen.
+    PanelWindow {
+        id: sbPopup
+        visible: root.sbOpen
+        screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+        anchors { top: true; right: true }
+        margins { top: theme.barHeight + 6; right: 8 }
+        readonly property real maxH: (screen ? screen.height : 900) - theme.barHeight - 24
+        readonly property bool listMode: root.cfgVal("popup_mode", "list") !== "single"
+        implicitWidth: listMode ? 404 : 388
+        implicitHeight: listMode ? Math.min(maxH, sbHead.implicitHeight + sbList.contentHeight + sbFoot.implicitHeight + 28 + 24)
+                                 : sbCol.implicitHeight + 28
+        color: "transparent"
+        exclusionMode: ExclusionMode.Ignore
+        focusable: true
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+        WlrLayershell.layer: WlrLayer.Overlay
+
+        Rectangle {
+            anchors.fill: parent
+            radius: theme.popupRadius
+            color: theme.panelBackground
+            border.width: 2
+            border.color: theme.popupBorder
+            Grain {}
+
+            ColumnLayout {
+                visible: sbPopup.listMode
                 anchors { fill: parent; margins: 14 }
                 spacing: 12
 
@@ -3610,6 +3749,118 @@ ShellRoot {
                     Btn { glyph: "\uf013"; glyphSize: 14; highlight: root.sbSetOpen; onClicked: root.openSbSet() }
                 }
             }
+            Column {
+                id: sbCol
+                visible: !sbPopup.listMode
+                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 14 }
+                spacing: 12
+
+                RowLayout {
+                    width: parent.width
+                    spacing: 8
+                    Rectangle {
+                        width: 8; height: 8; radius: 4
+                        color: root.sbColor(root.sbCurrent())
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    Text {
+                        text: root.sbCurrent() ? (root.sbCat(root.sbCurrent()).toUpperCase() + (root.sbCurrent().league_label ? "  \u00b7  " + root.sbCurrent().league_label : "")) : "SCOREBOARD"
+                        color: theme.barText
+                        font.family: theme.fontFamily
+                        font.pixelSize: theme.fontSize
+                        font.bold: true
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                    Item { Layout.fillWidth: true }
+                    Text {
+                        text: (root.sbTotal > 0 ? (root.sbIndex + 1) : 0) + " / " + root.sbTotal
+                        color: theme.textMuted
+                        font.family: theme.fontFamily
+                        font.pixelSize: theme.fontSize - 1
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+                }
+
+                Rectangle {
+                    width: parent.width
+                    radius: theme.radius
+                    color: theme.cardFill
+                    border.width: 1
+                    border.color: theme.cardBorder
+                    height: matchCol.implicitHeight + 24
+
+                    Column {
+                        id: matchCol
+                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
+                        spacing: 12
+
+                        Item {
+                            width: matchCol.width
+                            height: vsRow.implicitHeight
+                            visible: root.sbCurrent() && root.sbCurrent().kind === "game"
+
+                            RowLayout {
+                                id: vsRow
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                spacing: 14
+
+                                TeamCol {
+                                    Layout.alignment: Qt.AlignVCenter
+                                    team: (root.sbCurrent() && root.sbCurrent().away) ? root.sbCurrent().away : ({})
+                                    showScore: root.sbHasScore(root.sbCurrent())
+                                }
+                                Text {
+                                    Layout.alignment: Qt.AlignVCenter
+                                    text: "VS"
+                                    color: theme.textMuted
+                                    font.family: theme.fontFamily
+                                    font.pixelSize: theme.fontSize + 2
+                                    font.bold: true
+                                }
+                                TeamCol {
+                                    Layout.alignment: Qt.AlignVCenter
+                                    team: (root.sbCurrent() && root.sbCurrent().home) ? root.sbCurrent().home : ({})
+                                    showScore: root.sbHasScore(root.sbCurrent())
+                                }
+                            }
+                        }
+
+                        Text {
+                            visible: root.sbCurrent() && root.sbCurrent().kind !== "game"
+                            width: matchCol.width
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            text: root.sbLabel(root.sbCurrent())
+                            color: theme.barText
+                            font.family: theme.fontFamily
+                            font.pixelSize: theme.fontSize + 2
+                        }
+
+                        Text {
+                            width: matchCol.width
+                            horizontalAlignment: Text.AlignHCenter
+                            text: root.sbStatus(root.sbCurrent())
+                            color: root.sbColor(root.sbCurrent())
+                            font.family: theme.fontFamily
+                            font.pixelSize: theme.fontSize
+                        }
+                    }
+                }
+
+                RowLayout {
+                    width: parent.width
+                    spacing: 8
+                    Btn { glyph: "\uf104"; glyphSize: 15; onClicked: root.sbStep(-1) }
+                    Btn {
+                        Layout.fillWidth: true
+                        glyph: "\uf021"; glyphSize: 14
+                        label: "Refresh"
+                        onClicked: if (!sbProc.running) sbProc.running = true
+                    }
+                    Btn { glyph: "\uf105"; glyphSize: 15; onClicked: root.sbStep(1) }
+                    Btn { glyph: "\uf013"; glyphSize: 14; highlight: root.sbSetOpen; onClicked: root.openSbSet() }
+                }
+            }
         }
     }
 
@@ -3674,6 +3925,13 @@ ShellRoot {
                         options: [{ value: "left", label: "Left" }, { value: "center", label: "Center" }, { value: "right", label: "Right" }]
                         value: root.cfgVal("position", "right")
                         onPicked: function (v) { root.saveSb({ position: v, positioned: true }) }
+                    }
+
+                    Text { text: "Popup view"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1 }
+                    Segmented {
+                        options: [{ value: "list", label: "List all games" }, { value: "single", label: "One at a time" }]
+                        value: root.cfgVal("popup_mode", "list")
+                        onPicked: function (v) { root.saveSb({ popup_mode: v }) }
                     }
 
                     RowLayout {
@@ -6051,8 +6309,8 @@ ShellRoot {
 
     HyprlandFocusGrab {
         id: grab
-        windows: [displayPopup, sbPopup, sbSetPopup, netPopup, sndPopup, powerPopup, wxPopup, wxSetPopup, btPopup, calPopup, calAuthPopup, barSetPopup, pluginSetPopup]
-        active: root.displayOpen || root.sbOpen || root.sbSetOpen || root.netOpen || root.sndOpen || root.powerOpen || root.wxOpen || root.wxSetOpen || root.btOpen || root.calOpen || root.calAuthOpen || root.barSetOpen || root.pluginSetOpen
+        windows: [keybindsPopup, displayPopup, sbPopup, sbSetPopup, netPopup, sndPopup, powerPopup, wxPopup, wxSetPopup, btPopup, calPopup, calAuthPopup, barSetPopup, pluginSetPopup]
+        active: root.keybindsOpen || root.displayOpen || root.sbOpen || root.sbSetOpen || root.netOpen || root.sndOpen || root.powerOpen || root.wxOpen || root.wxSetOpen || root.btOpen || root.calOpen || root.calAuthOpen || root.barSetOpen || root.pluginSetOpen
         onCleared: root.closePanels()
     }
 
@@ -6101,6 +6359,7 @@ ShellRoot {
         function toggleCalendar() { root.calOpenPanel() }
         function toggleCalendarAuth() { root.calOpenAuth() }
         function togglePower() { root.togglePower() }
+        function toggleKeybinds() { root.toggleKeybinds() }
         function volumeUp() { root.volumeUp() }
         function volumeDown() { root.volumeDown() }
         function volumeMute() { root.volumeMute() }
