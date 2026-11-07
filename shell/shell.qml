@@ -3433,14 +3433,16 @@ ShellRoot {
     }
 
     // ------------------------------------------------------- scoreboard popup
+    // Every tracked game at once; scrolls when the list is taller than the screen.
     PanelWindow {
         id: sbPopup
         visible: root.sbOpen
         screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
         anchors { top: true; right: true }
         margins { top: theme.barHeight + 6; right: 8 }
-        implicitWidth: 388
-        implicitHeight: sbCol.implicitHeight + 28
+        readonly property real maxH: (screen ? screen.height : 900) - theme.barHeight - 24
+        implicitWidth: 404
+        implicitHeight: Math.min(maxH, sbHead.implicitHeight + sbList.contentHeight + sbFoot.implicitHeight + 28 + 24)
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         focusable: true
@@ -3455,114 +3457,156 @@ ShellRoot {
             border.color: theme.popupBorder
             Grain {}
 
-            Column {
-                id: sbCol
-                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 14 }
+            ColumnLayout {
+                anchors { fill: parent; margins: 14 }
                 spacing: 12
 
                 RowLayout {
-                    width: parent.width
+                    id: sbHead
+                    Layout.fillWidth: true
                     spacing: 8
-                    Rectangle {
-                        width: 8; height: 8; radius: 4
-                        color: root.sbColor(root.sbCurrent())
-                        Layout.alignment: Qt.AlignVCenter
-                    }
                     Text {
-                        text: root.sbCurrent() ? (root.sbCat(root.sbCurrent()).toUpperCase() + (root.sbCurrent().league_label ? "  \u00b7  " + root.sbCurrent().league_label : "")) : "SCOREBOARD"
+                        text: "Scoreboard"
                         color: theme.barText
-                        font.family: theme.fontFamily
-                        font.pixelSize: theme.fontSize
-                        font.bold: true
-                        Layout.alignment: Qt.AlignVCenter
+                        font.family: theme.fontFamily; font.pixelSize: theme.fontSize + 2; font.bold: true
                     }
                     Item { Layout.fillWidth: true }
                     Text {
-                        text: (root.sbTotal > 0 ? (root.sbIndex + 1) : 0) + " / " + root.sbTotal
+                        text: root.sbTotal + (root.sbTotal === 1 ? " game" : " games")
                         color: theme.textMuted
-                        font.family: theme.fontFamily
-                        font.pixelSize: theme.fontSize - 1
-                        Layout.alignment: Qt.AlignVCenter
+                        font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1
                     }
                 }
 
-                Rectangle {
-                    width: parent.width
-                    radius: theme.radius
-                    color: theme.cardFill
-                    border.width: 1
-                    border.color: theme.cardBorder
-                    height: matchCol.implicitHeight + 24
+                ListView {
+                    id: sbList
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    spacing: 10
+                    model: root.sbTiles
+                    boundsBehavior: Flickable.StopAtBounds
+                    flickableDirection: Flickable.VerticalFlick
 
-                    Column {
-                        id: matchCol
-                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
-                        spacing: 12
+                    delegate: Rectangle {
+                        id: cardRect
+                        required property var modelData
+                        width: sbList.width - (sbList.contentHeight > sbList.height ? 10 : 0)
+                        radius: theme.radius
+                        color: theme.cardFill
+                        border.width: 1
+                        border.color: theme.cardBorder
+                        height: cardCol.implicitHeight + 20
 
-                        Item {
-                            width: matchCol.width
-                            height: vsRow.implicitHeight
-                            visible: root.sbCurrent() && root.sbCurrent().kind === "game"
+                        Column {
+                            id: cardCol
+                            anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
+                            spacing: 8
 
                             RowLayout {
-                                id: vsRow
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                spacing: 14
-
-                                TeamCol {
-                                    Layout.alignment: Qt.AlignVCenter
-                                    team: (root.sbCurrent() && root.sbCurrent().away) ? root.sbCurrent().away : ({})
-                                    showScore: root.sbHasScore(root.sbCurrent())
+                                width: parent.width
+                                spacing: 8
+                                Rectangle { width: 8; height: 8; radius: 4; color: root.sbColor(modelData); Layout.alignment: Qt.AlignVCenter }
+                                Text {
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    text: root.sbCat(modelData).replace("_", " ") + (modelData.league_label ? "  \u00b7  " + modelData.league_label : "")
+                                    color: theme.textMuted
+                                    font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1
                                 }
                                 Text {
-                                    Layout.alignment: Qt.AlignVCenter
-                                    text: "VS"
-                                    color: theme.textMuted
-                                    font.family: theme.fontFamily
-                                    font.pixelSize: theme.fontSize + 2
-                                    font.bold: true
-                                }
-                                TeamCol {
-                                    Layout.alignment: Qt.AlignVCenter
-                                    team: (root.sbCurrent() && root.sbCurrent().home) ? root.sbCurrent().home : ({})
-                                    showScore: root.sbHasScore(root.sbCurrent())
+                                    text: root.sbStatus(modelData)
+                                    color: root.sbColor(modelData)
+                                    font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; font.bold: true
                                 }
                             }
+                            Repeater {
+                                model: modelData.kind === "game" ? [modelData.away || ({}), modelData.home || ({})] : []
+                                delegate: RowLayout {
+                                    id: sbl
+                                    required property var modelData
+                                    width: cardCol.width
+                                    spacing: 10
+                                    Item {
+                                        Layout.preferredWidth: 26; Layout.preferredHeight: 26
+                                        Image {
+                                            id: sideLogo
+                                            anchors.fill: parent
+                                            source: sbl.modelData && sbl.modelData.logo ? sbl.modelData.logo : ""
+                                            sourceSize.width: 52; sourceSize.height: 52
+                                            fillMode: Image.PreserveAspectFit
+                                            smooth: true; asynchronous: true
+                                            visible: status === Image.Ready
+                                        }
+                                        Text {
+                                            anchors.centerIn: parent
+                                            visible: sideLogo.status !== Image.Ready
+                                            text: (sbl.modelData && sbl.modelData.abbr) ? sbl.modelData.abbr : "?"
+                                            color: theme.barText
+                                            font.family: theme.fontFamily; font.pixelSize: 10; font.bold: true
+                                        }
+                                    }
+                                    Text {
+                                        text: (sbl.modelData && sbl.modelData.abbr) ? sbl.modelData.abbr : "?"
+                                        color: sbl.modelData && sbl.modelData.fav ? theme.accent : theme.barText
+                                        font.family: theme.fontFamily; font.pixelSize: theme.fontSize + 2; font.bold: true
+                                        Layout.preferredWidth: 48
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                        text: (sbl.modelData && sbl.modelData.name) ? sbl.modelData.name : ""
+                                        color: theme.textMuted
+                                        font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1
+                                    }
+                                    Text {
+                                        visible: root.sbHasScore(cardRect.modelData)
+                                        text: (sbl.modelData && sbl.modelData.score !== undefined && sbl.modelData.score !== "") ? String(sbl.modelData.score) : ""
+                                        color: theme.barText
+                                        font.family: theme.fontFamily; font.pixelSize: theme.fontSize + 6; font.bold: true
+                                    }
+                                }
+                            }
+                            Text {
+                                width: parent.width
+                                visible: modelData.kind !== "game"
+                                wrapMode: Text.WordWrap
+                                text: root.sbLabel(modelData)
+                                color: theme.barText
+                                font.family: theme.fontFamily; font.pixelSize: theme.fontSize + 1
+                            }
                         }
+                    }
 
-                        Text {
-                            visible: root.sbCurrent() && root.sbCurrent().kind !== "game"
-                            width: matchCol.width
-                            horizontalAlignment: Text.AlignHCenter
-                            wrapMode: Text.WordWrap
-                            text: root.sbLabel(root.sbCurrent())
-                            color: theme.barText
-                            font.family: theme.fontFamily
-                            font.pixelSize: theme.fontSize + 2
-                        }
+                    Text {
+                        anchors.centerIn: parent
+                        visible: root.sbTotal === 0
+                        text: (root.sbCfg && root.sbCfg.has_teams) ? "No games coming up" : "Pick teams in settings"
+                        color: theme.textMuted
+                        font.family: theme.fontFamily; font.pixelSize: theme.fontSize
+                    }
 
-                        Text {
-                            width: matchCol.width
-                            horizontalAlignment: Text.AlignHCenter
-                            text: root.sbStatus(root.sbCurrent())
-                            color: root.sbColor(root.sbCurrent())
-                            font.family: theme.fontFamily
-                            font.pixelSize: theme.fontSize
-                        }
+                    // Slim scroll indicator, shown only when the list overflows.
+                    Rectangle {
+                        visible: sbList.contentHeight > sbList.height
+                        anchors.right: parent.right
+                        width: 4; radius: 2
+                        color: Qt.rgba(theme.barText.r, theme.barText.g, theme.barText.b, 0.35)
+                        y: sbList.visibleArea.yPosition * sbList.height
+                        height: Math.max(24, sbList.visibleArea.heightRatio * sbList.height)
                     }
                 }
 
                 RowLayout {
-                    width: parent.width
+                    id: sbFoot
+                    Layout.fillWidth: true
                     spacing: 8
-                    Btn { glyph: "\uf104"; glyphSize: 15; onClicked: root.sbStep(-1) }
                     Btn {
                         Layout.fillWidth: true
                         glyph: "\uf021"; glyphSize: 14
                         label: "Refresh"
                         onClicked: if (!sbProc.running) sbProc.running = true
                     }
-                    Btn { glyph: "\uf105"; glyphSize: 15; onClicked: root.sbStep(1) }
                     Btn { glyph: "\uf013"; glyphSize: 14; highlight: root.sbSetOpen; onClicked: root.openSbSet() }
                 }
             }
