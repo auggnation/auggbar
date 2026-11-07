@@ -128,10 +128,18 @@ USER_AGENT = "AuggmentScoreboard/1.0 (+https://github.com/auggnation/auggment-sc
 TSDB_BASE = "https://www.thesportsdb.com/api/v1/json/3"
 
 
+FETCH_ERRORS = 0   # network/HTTP failures this run; a run with errors and no data must not replace the cache
+
+
 def http_json(url, timeout=8):
+    global FETCH_ERRORS
     req = request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
-    with request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8", "replace"))
+    try:
+        with request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception:
+        FETCH_ERRORS += 1
+        raise
 
 
 def load_config(path):
@@ -656,6 +664,7 @@ def build(cfg):
         "games": games[:max_games],
         "races": races,
         "golf": golf,
+        "fetch_errors": FETCH_ERRORS,
         "has_favorites": bool(fav_set) or bool(racing) or bool(golf_favs),
     }
 

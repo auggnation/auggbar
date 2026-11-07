@@ -308,9 +308,16 @@ ShellRoot {
     function loadSb(txt) {
         try {
             var d = JSON.parse(txt)
-            root.sbTiles = d.tiles || []
-            root.sbCfg = d.config || {}
-            root.sbIndex = d.index || 0
+            var tiles = d.tiles || []
+            // Keep what is already showing if a refresh comes back empty or without
+            // the team config (typical right after waking, before Wi-Fi is back).
+            var keepOld = root.sbTotal > 0 && tiles.length === 0
+            if (!keepOld) {
+                root.sbTiles = tiles
+                root.sbIndex = d.index || 0
+            }
+            if (d.config && (d.config.has_teams || !(root.sbCfg && root.sbCfg.has_teams)))
+                root.sbCfg = d.config
         } catch (e) {
             console.log("scoreboard json: " + e)
         }

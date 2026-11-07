@@ -61,15 +61,25 @@ def default_config():
 
 def load_config():
     cfg = default_config()
+    last_good = os.path.join(CONFIG_DIR, ".scoreboard.last-good.json")
     try:
         with open(CONFIG_PATH, "r") as fh:
             loaded = json.load(fh)
         if isinstance(loaded, dict):
             cfg.update(loaded)
+            try:  # remember the last readable config in case a later read glitches
+                with open(last_good, "w") as out:
+                    json.dump(loaded, out)
+            except Exception:
+                pass
     except FileNotFoundError:
         pass
     except Exception:
-        pass
+        try:
+            with open(last_good, "r") as fh:
+                cfg.update(json.load(fh))
+        except Exception:
+            pass
     return cfg
 
 
@@ -138,6 +148,11 @@ def get_scores(config, force=False):
             capture_output=True, text=True, timeout=30,
         )
         data = json.loads(out.stdout)
+        # Offline (e.g. just after waking): every request failed, so the document is
+        # empty. Never let that replace good cached scores - keep them and retry soon.
+        if isinstance(data, dict) and data.get("fetch_errors") and not (
+                data.get("games") or data.get("races") or data.get("golf")):
+            raise RuntimeError("fetch failed")
         if isinstance(data, dict):
             os.makedirs(CACHE_DIR, exist_ok=True)
             fd, tmp = tempfile.mkstemp(dir=CACHE_DIR, prefix=".scores.", suffix=".tmp")
