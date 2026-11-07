@@ -102,6 +102,51 @@ ShellRoot {
         if (!sbCfgRead.running) sbCfgRead.running = true
     }
 
+    // ------------------------------------------------------------ wake from sleep
+    // Qt timers run on a clock that stops while the laptop is suspended, so after
+    // a nap every refresh timer would just carry on with its old countdown and
+    // the bar would show stale updates, scores, weather and colours. Notice the
+    // jump in wall-clock time and refresh everything: local state straight away,
+    // anything that needs the network once Wi-Fi has had a moment to come back.
+    property double lastTickMs: Date.now()
+    Timer {
+        interval: 5000
+        running: true
+        repeat: true
+        onTriggered: {
+            var now = Date.now()
+            var gap = now - root.lastTickMs
+            root.lastTickMs = now
+            if (gap > 25000) root.onResumed()
+        }
+    }
+    function onResumed() {
+        console.log("resumed after " + "sleep: refreshing")
+        if (!themeProc.running) themeProc.running = true
+        if (!updateStateRead.running) updateStateRead.running = true
+        root.refreshSystem()
+        resumeNetTimer.restart()
+    }
+    Timer { id: resumeNetTimer; interval: 15000; repeat: false; onTriggered: root.resumeNetRefresh() }
+    function resumeNetRefresh() {
+        if (!themeProc.running) themeProc.running = true
+        if (!updateResumeCheck.running) updateResumeCheck.running = true
+        if (!sbProc.running) sbProc.running = true
+        root.wxRefresh()
+        root.calRefresh(false)
+    }
+    // After a nap, re-check for updates if the recorded state is over an hour old.
+    Process {
+        id: updateResumeCheck
+        command: ["bash", "-c",
+            "state=\"$HOME/.local/state/arch-update\"; " +
+            "last=$(head -n1 \"$state/last_updates_check_time\" 2>/dev/null); " +
+            "now=$(date +%s); " +
+            "if [ -z \"$last\" ] || [ $((now - last)) -gt 3600 ]; then " +
+            "systemctl --user start --no-block arch-update.service; " +
+            "fi"]
+    }
+
     // ------------------------------------------------------------------ theme
     // One payload: colors.toml, =====PALETTE=====, palette.toml,
     // =====SHELL=====, shell.toml. Re-read periodically so the bar follows the

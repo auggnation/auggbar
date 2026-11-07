@@ -73,13 +73,25 @@ if [[ "${1:-}" == "--once" ]]; then
     exit 0
 fi
 
+# Wall-clock scheduling: `sleep N` runs on a clock that stops while the laptop is
+# suspended, so a long sleep would sit through (and long after) a nap. Instead,
+# wake every few seconds and compare against the real time: after resume the due
+# time has already passed, so the wallpaper (and with it the whole colour theme)
+# changes within seconds of waking.
+next_due=0
 while true; do
     interval=$(setting bg_interval 300)
     [[ "$interval" =~ ^[0-9]+$ ]] || interval=300
+    now=$(date +%s)
     if (( interval > 0 )); then
-        if img="$(pick)"; then apply "$img"; else interval=30; fi
-    else
-        interval=30   # paused: check again for a new interval in 30 s
+        last_change=$(stat -c %Y "$LAST" 2>/dev/null || echo 0)
+        next_due=$(( last_change + interval ))
+        if (( now >= next_due )); then
+            if img="$(pick)"; then apply "$img"; else sleep 30; fi
+            # give a freshly woken system a moment (network, display) before the next look
+            sleep 2
+            continue
+        fi
     fi
-    sleep "$interval"
+    sleep 5
 done
