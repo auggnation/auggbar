@@ -50,10 +50,12 @@ umask "$old_umask"
     echo "}"
     echo
   fi
+  # The keyboard backlight goes dark with the screen and comes back on wake.
+  KBD="$HOME/.local/bin/auggment-kbd-backlight"
   echo "listener {"
   echo "    timeout = $SCREEN"
-  echo "    on-timeout = hyprctl dispatch 'hl.dsp.dpms({ action = \"off\" })'"
-  echo "    on-resume = hyprctl dispatch 'hl.dsp.dpms({ action = \"on\" })'"
+  echo "    on-timeout = hyprctl dispatch 'hl.dsp.dpms({ action = \"off\" })'; $KBD off"
+  echo "    on-resume = hyprctl dispatch 'hl.dsp.dpms({ action = \"on\" })'; $KBD on"
   echo "}"
 } > "$tmp"
 

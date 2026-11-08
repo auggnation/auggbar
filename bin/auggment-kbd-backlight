@@ -1,0 +1,24 @@
+#!/bin/bash
+# auggment-kbd-backlight off|on — keyboard backlight follows the screen.
+#   off: remember the current level, then turn the backlight off (used when the screen sleeps)
+#   on : put the remembered level back (used on wake)
+# Device: the Framework keyboard backlight; silently does nothing on machines without it.
+DEV=chromeos::kbd_backlight
+STATE="${XDG_RUNTIME_DIR:-/tmp}/auggment-kbd-backlight"
+command -v brightnessctl >/dev/null 2>&1 || exit 0
+[ -e "/sys/class/leds/$DEV" ] || exit 0
+case "${1:-}" in
+    off)
+        cur=$(brightnessctl -d "$DEV" get 2>/dev/null)
+        # never overwrite a remembered level with 0 (screen-off can fire more than once)
+        if [[ "$cur" =~ ^[0-9]+$ ]] && (( cur > 0 )); then printf '%s' "$cur" > "$STATE"; fi
+        brightnessctl -q -d "$DEV" set 0 >/dev/null 2>&1
+        ;;
+    on)
+        if [ -s "$STATE" ]; then
+            brightnessctl -q -d "$DEV" set "$(cat "$STATE")" >/dev/null 2>&1
+            rm -f "$STATE"
+        fi
+        ;;
+    *) echo "usage: ${0##*/} off|on" >&2; exit 2 ;;
+esac
