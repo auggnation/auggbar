@@ -136,3 +136,7 @@ Shows live and upcoming scores for your favourite teams (and NASCAR/F1/IndyCar d
    `function settingsAction(key)`. Or provide `function openSettings()` to
    open a panel of your own.
 3. Register it in `barWidgetFiles` / `barLabels` / `barDefaults` in `shell.qml`.
+
+## How This Was Made
+
+I write this project myself and use [Claude Code](https://claude.com/claude-code), Anthropic's AI coding assistant, to help build it and to review and double-check my work. I mention it plainly because you should know how the software you run was made. Every change is mine to own, so if something is broken, open an issue or send a pull request.
