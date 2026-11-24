@@ -131,29 +131,50 @@ def _cache_age():
         return None
 
 
+def _config_mtime():
+    try:
+        return os.path.getmtime(CONFIG_PATH)
+    except OSError:
+        return 0
+
+
+def _read_cache():
+    try:
+        with open(CACHE_PATH, "r") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
 def get_scores(config, force=False):
-    """Return the scores document, refetching through fetch-scores.py when the
-    cache is older than refresh_seconds (or when force is set)."""
-    refresh = max(15, int(config.get("refresh_seconds", 60) or 60))
-    age = _cache_age()
-    if not force and age is not None and age < refresh:
-        try:
-            with open(CACHE_PATH, "r") as fh:
-                return json.load(fh)
-        except Exception:
-            pass
+    """Return the scores document.
+
+    The fetcher decides what actually needs the network (see fetch-scores.py and
+    smartcache.py) and stamps the document with ``next_poll_at``. Until that time - and
+    as long as the settings are unchanged - the cached document is exactly what a fresh
+    run would produce, so we do not even start the fetcher. That is the common case: a
+    favourite team a day or more away is re-checked only a couple of times a day.
+    ``force`` is the manual Refresh.
+    """
+    cached = _read_cache()
+    cfg_mtime = _config_mtime()
+    if (not force and cached and cached.get("config_mtime") == cfg_mtime
+            and float(cached.get("next_poll_at") or 0) > time.time()):
+        return cached
     try:
         out = subprocess.run(
-            [sys.executable, FETCH_SCRIPT],
-            capture_output=True, text=True, timeout=30,
+            [sys.executable, FETCH_SCRIPT] + (["--force"] if force else []),
+            capture_output=True, text=True, timeout=45,
         )
         data = json.loads(out.stdout)
-        # Offline (e.g. just after waking): every request failed, so the document is
-        # empty. Never let that replace good cached scores - keep them and retry soon.
+        # Offline with nothing stored yet: every request failed and the document is empty.
+        # Never let that replace good cached scores - keep them and retry soon.
         if isinstance(data, dict) and data.get("fetch_errors") and not (
                 data.get("games") or data.get("races") or data.get("golf")):
             raise RuntimeError("fetch failed")
         if isinstance(data, dict):
+            data["config_mtime"] = cfg_mtime
             os.makedirs(CACHE_DIR, exist_ok=True)
             fd, tmp = tempfile.mkstemp(dir=CACHE_DIR, prefix=".scores.", suffix=".tmp")
             with os.fdopen(fd, "w") as fh:
@@ -163,18 +184,10 @@ def get_scores(config, force=False):
     except Exception:
         pass
     # Fall back to whatever cache we have, even if stale.
-    if age is not None:
-        try:
-            with open(CACHE_PATH, "r") as fh:
-                return json.load(fh)
-        except Exception:
-            pass
+    if cached:
+        return cached
     return {"games": [], "races": [], "golf": [], "counts": {}}
 
-
-# ---------------------------------------------------------------------------
-# Key helpers
-# ---------------------------------------------------------------------------
 
 def norm_key(key):
     s = str(key or "")
