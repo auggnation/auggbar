@@ -5,6 +5,18 @@ A Quickshell bar and desktop shell for Hyprland: bar, app launcher, notification
 A single Quickshell top bar for Hyprland, made of plugins that can each be
 turned on/off, moved, and configured from the bar itself.
 
+## What's new (2026-11-24)
+
+**Scoreboard: smart polling and offline mode.** The scoreboard plugin used to re-read ESPN every minute (about 45 requests a minute for a typical setup). Now it only goes to the network when there is something to learn, and it remembers the rest:
+
+- Game times are re-checked a few times a day (just after midnight, then 6 AM, noon and 5 PM; only midnight and noon when no favourite plays within 24 hours).
+- A league is polled for live scores only while one of your favourite teams' games is on or about to start, and then with a single request for today.
+- Leagues with no favourite team or driver are not fetched at all (unless "league in cycle" is on).
+- Schedules, team lists and favourite-team logos are stored on disk, so the bar keeps showing the last known schedule and logos with no network, and the settings team picker opens instantly.
+- The bar no longer even starts the fetcher until something is due.
+
+See [Scoreboard plugin](#scoreboard-plugin) for details.
+
 ## Screenshots
 
 The bar is wallpaper-coloured glass: it, and the text on every widget, recolour
@@ -83,10 +95,35 @@ shell/                 -> ~/.config/quickshell
   widgets/<Plugin>.qml one file per plugin
   widgets/PluginSlot.qml  loads a plugin + routes right/Alt-click to settings
   components/          launcher + viking components
-  quickshell-scripts/  scoreboard + display backends
+  quickshell-scripts/  scoreboard (fetch-scores.py, smartcache.py, teams_lib.py, ...) + display backends
 bin/                   -> ~/.local/bin (auggment-* helpers)
 config/settings.json   default plugin layout
 ```
+
+## Scoreboard plugin
+
+Shows live and upcoming scores for your favourite teams (and NASCAR/F1/IndyCar drivers, PGA golfers) from ESPN, plus TheSportsDB for the CFL. Pick teams in the plugin's panel; settings are in `~/.config/auggment/scoreboard.json`.
+
+**How it polls**
+
+| situation | network use |
+|---|---|
+| favourite game more than 24 h away | 2 schedule checks a day (00:05, 12:05) |
+| favourite game within 24 h | 4 schedule checks a day (00:05, 06:05, 12:05, 17:05) |
+| favourite game starting in <5 min, or in progress | 1 request per poll for today's games |
+| no favourite in a league | nothing (league is skipped) |
+| offline | retries with growing delays (1 min up to 15 min); last known schedule keeps showing |
+
+`refresh_seconds` (Settings > Scoreboard) is how often a *live* favourite game is polled; it does nothing while no favourite game is on. The Refresh button re-reads games happening around now.
+
+**What is cached** (all under `~/.cache/auggment/`, safe to delete; it rebuilds itself):
+
+- `scoreboard-events/` — raw schedule per league (this is what makes offline mode work)
+- `scoreboard-logos/` — logos of your favourite games, shown from disk
+- `scoreboard-misc.json` — team lists for the picker (7 days)
+- `scoreboard-cache.json` — the ready-to-display document, stamped with `next_poll_at`
+
+`smartcache.py` holds the polling rules and is shared with the [Auggmented Scoreboard](https://github.com/auggnation/Auggment-Scoreboard) kiosk app; keep the two copies identical.
 
 ### Writing a plugin
 
