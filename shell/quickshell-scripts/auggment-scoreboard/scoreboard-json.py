@@ -28,7 +28,7 @@ def main():
         "total": len(tiles),
         "config": {
             "rotate_seconds": cfg.get("rotate_seconds", 6),
-            "refresh_seconds": cfg.get("refresh_seconds", 60),
+            "update_interval_minutes": cfg.get("update_interval_minutes", 1440),
             "timezone": cfg.get("timezone", ""),
             "state_colors": colors,
             "has_teams": bool(cfg.get("teams") or []),

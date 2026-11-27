@@ -24,6 +24,8 @@ SLUG_OVERRIDES = {
 WEB_API_LEAGUES = {"softball/college-softball", "baseball/college-baseball"}
 
 _cache = smartcache.KeyValueCache(os.path.expanduser("~/.cache/auggment/scoreboard-misc.json"))
+_meter = smartcache.RequestMeter(os.path.expanduser("~/.cache/auggment/api_usage.json"),
+                                 limit=lambda: 0)      # counted; a manual picker is never capped
 
 
 def _http_json(url, timeout=8):
@@ -45,6 +47,8 @@ def teams_for(path):
         return _cache.get(key) or []
     sport, league = SLUG_OVERRIDES.get(path, (path.split("/")[0], path.split("/")[-1]))
     host = "site.web.api.espn.com" if path in WEB_API_LEAGUES else "site.api.espn.com"
+    if not _meter.acquire("teams"):
+        return _cache.get(key) or []
     try:
         res = _http_json(f"https://{host}/apis/site/v2/sports/{sport}/{league}/teams?limit=500")
         raw = res["sports"][0]["leagues"][0]["teams"]

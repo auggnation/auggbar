@@ -85,7 +85,7 @@ ESPN_API_PATHS = {
     "lacrosse/womens-college-lacrosse": ("lacrosse", "womens-college-lacrosse"),
     "lacrosse/pll": ("lacrosse", "pll"),
     "lacrosse/nll": ("lacrosse", "nll"),
-    "racing/nascar-cup": ("racing", "nascar-cup"),
+    "racing/nascar-cup": ("racing", "nascar-premier"),
     "racing/irl": ("racing", "irl"),
     "racing/f1": ("racing", "f1"),
     "golf/pga": ("golf", "pga"),
@@ -139,17 +139,28 @@ def _is_failure(exc):
     simply has nothing for us (e.g. an off-season series) - that is "no data", not an error,
     and must not trigger retries."""
     if isinstance(exc, error.HTTPError):
-        return exc.code >= 500 or exc.code == 429
+        return exc.code >= 500 or exc.code in (403, 429)
     return True
 
 
-def http_json(url, timeout=8):
+# Every ESPN request is counted and capped (~/.cache/auggment/api_usage.json).
+DAILY_LIMIT = [3000]
+meter = smartcache.RequestMeter(os.path.expanduser("~/.cache/auggment/api_usage.json"),
+                                limit=lambda: DAILY_LIMIT[0])
+
+
+def http_json(url, timeout=8, kind="schedule"):
     global FETCH_ERRORS
+    espn = "espn.com" in url
     req = request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
     try:
+        if espn and not meter.acquire(kind):
+            raise error.URLError("daily ESPN limit reached, or paused after a refusal")
         with request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8", "replace"))
     except Exception as exc:
+        if espn and isinstance(exc, error.HTTPError) and exc.code in (403, 429):
+            meter.pause()
         if _is_failure(exc):
             FETCH_ERRORS += 1
         raise
@@ -190,53 +201,49 @@ def tzinfo(name):
 
 
 def _is_network_down(exc):
-    """True for connection-level failures (offline, DNS, timeout) as opposed to an HTTP error."""
-    return not isinstance(exc, error.HTTPError)
+    """True when trying more requests now is pointless: offline, timeout, or told to stop."""
+    return not isinstance(exc, error.HTTPError) or exc.code in (403, 429)
 
 
-def fetch_league(path, days_back, days_ahead, dates=None):
+def fetch_league(path, queries, kind="schedule"):
     """Fetch one ESPN league. Returns (events, error_count).
 
-    ``dates`` (list of date objects) restricts the fetch to those days - a live poll is one
-    request instead of one per day of the window. A connection failure aborts the rest
-    of the fetch instead of burning a timeout per remaining day.
+    ``queries`` is a list of ``(query_string, fallback_days)`` - see
+    smartcache.full_queries. A connection failure aborts the rest of the fetch instead of
+    burning a timeout per remaining query.
     """
     sport, league = ESPN_API_PATHS.get(path, (path.split("/")[0], path.split("/")[-1]))
     host = "site.web.api.espn.com" if path in ESPN_WEB_API_LEAGUES else "site.api.espn.com"
     base = f"https://{host}/apis/site/v2/sports/{sport}/{league}/scoreboard"
 
-    events, seen, errors = [], set(), 0
+    events, seen, errors, stop = [], set(), 0, False
 
-    def collect(url):
-        nonlocal errors
+    def get(url):
+        nonlocal errors, stop
+        if stop:
+            return []
         try:
-            for e in http_json(url).get("events", []):
-                if e.get("id") and e["id"] not in seen:
-                    seen.add(e["id"])
-                    events.append(e)
-            return True
+            return [e for e in http_json(url, kind=kind).get("events", []) if e.get("id")]
         except Exception as exc:
-            if not _is_failure(exc):
-                return True
-            errors += 1
-            return not _is_network_down(exc)
+            if _is_failure(exc):
+                errors += 1
+                stop = _is_network_down(exc)
+            return []
+
+    def add(batch):
+        for e in batch:
+            if e["id"] not in seen:
+                seen.add(e["id"])
+                events.append(e)
 
     if path in ESPN_NO_DATE_LEAGUES:
-        collect(base)
+        add(get(base))
         return events, errors
-
-    if dates is None:
-        now = datetime.now(timezone.utc)
-        day = (now - timedelta(days=days_back)).date()
-        end = (now + timedelta(days=max(days_ahead, 1))).date()
-        dates = []
-        while day <= end:
-            dates.append(day)
-            day += timedelta(days=1)
-    for day in dates:
-        if not collect(f"{base}?dates={day.strftime('%Y%m%d')}"):
-            break
-
+    for query, fallback_days in queries:
+        batch = get(f"{base}?{query}")
+        if fallback_days and len(batch) >= smartcache.MONTH_LIMIT - 5:   # probably truncated
+            batch = [e for d in fallback_days for e in get(f"{base}?{smartcache.day_query(d)}")]
+        add(batch)
     events.sort(key=lambda e: e.get("date", ""))
     return events, errors
 
@@ -632,14 +639,14 @@ def parse_golf(path, event, fav_names):
 # Raw events are kept per league in ~/.cache/auggment/scoreboard-events/ so a run
 # that has nothing due makes ZERO network requests and still produces a full document
 # (the bar also works offline from the last known schedule). See smartcache.py for the
-# rules; in short: the whole window is re-read a few times a day (midnight first), and a
-# league is polled live only while one of its relevant games is on or about to start.
+# rules; in short: the window is read once a night, a favourite's game later today is
+# checked every few hours, a live one every minute, plus the optional update interval.
 
 CACHE_DIR = os.path.expanduser("~/.cache/auggment")
 EVENTS_DIR = os.path.join(CACHE_DIR, "scoreboard-events")
 LOGO_DIR = os.path.join(CACHE_DIR, "scoreboard-logos")
 
-# TheSportsDB is cached upstream; don't ask for it every 30 s while a game is on.
+# TheSportsDB is cached upstream; don't ask for it every minute while a game is on.
 for _p in leagues.TSDB_LEAGUE_IDS:
     smartcache.SLOW_LEAGUES.setdefault(_p, (120, smartcache.LIVE_MAX_AGE))
 
@@ -712,20 +719,7 @@ def league_needed(path, cfg, fav_set, golf_favs):
     return bool(cfg.get("league_in_cycle")) or bool(fav_abbrs(path, fav_set))
 
 
-def _live_dates(events, tz):
-    """Today, plus yesterday just after midnight or while a game that began yesterday runs."""
-    now_local = datetime.now(tz)
-    today = now_local.date()
-    late = False
-    for ev in events:
-        if smartcache.event_state(ev) == "in":
-            start = smartcache.parse_utc(ev.get("date"))
-            if start and start.astimezone(tz).date() < today:
-                late = True
-    return [today - timedelta(days=1), today] if (late or now_local.hour < 6) else [today]
-
-
-def refresh_league(path, back, ahead, tz, rel, force, now):
+def refresh_league(path, back, ahead, tz, rel, interval, force, now):
     """Bring one league's stored events up to date if (and only if) something is due.
 
     Returns (events, next_due_epoch, errors). Never raises; on any failure the last
@@ -736,64 +730,55 @@ def refresh_league(path, back, ahead, tz, rel, force, now):
     events = doc["events"] if have else None
     meta = dict(doc.get("meta") or {}) if have else {}
     sig = f"{back}:{ahead}"
-    fails = int(meta.get("fails", 0))
-    backoff_until = meta.get("attempt_at", 0) + smartcache.backoff_seconds(fails, 30) if fails else 0
 
-    view = plan_view(path, events or [])
-    mode = None
-    if events is None or meta.get("sig") != sig:
-        mode = "full"
-    elif now >= smartcache.full_due_at(meta.get("full_at"), tz, smartcache.slots_for(view, now, rel)):
-        mode = "full"
-    else:
-        interval, _ = smartcache.live_plan(path, view, now, rel)
-        if interval and now >= meta.get("live_at", 0) + interval:
-            mode = "live"
-        elif force and smartcache.slots_for(view, now, rel) is smartcache.SCHEDULE_SLOTS:
-            mode = "live"                     # manual refresh: re-read games happening around now
-    if mode and fails and now < backoff_until and not (force and events is None):
-        mode = None                           # recently failed (offline?): wait out the backoff
+    def plan_now():
+        view = plan_view(path, events or [])
+        known = meta if events is not None else {}
+        return view, smartcache.plan_league(path, view, known, now, tz, sig, interval, rel)
+
+    view, plan = plan_now()
+    mode, dates = plan.mode, plan.dates
+    if force and mode is None and plan.reason != "backoff":
+        # Manual refresh: re-read today's games (nothing to ask if there are none).
+        today = datetime.now(tz).date()
+        starts = [smartcache.parse_utc(e.get("date")) for e in view]
+        dates = sorted({smartcache.feed_date(t) for t in starts if t and t.astimezone(tz).date() == today})
+        mode = "update" if dates else None
 
     errors = 0
     if mode:
         meta["attempt_at"] = now
         tsdb = leagues.source_for(path) == "tsdb"
+        full = mode == "full"
         if tsdb:
             fresh, errors = fetch_tsdb(path, back, ahead)
-        elif mode == "live":
-            fresh, errors = fetch_league(path, back, ahead, dates=_live_dates(events or [], tz))
+        elif full:
+            fresh, errors = fetch_league(path, smartcache.full_queries(path, back, ahead, now))
         else:
-            fresh, errors = fetch_league(path, back, ahead)
+            fresh, errors = fetch_league(path, [(smartcache.day_query(d), []) for d in dates], "live")
         if errors and not fresh:
-            meta["fails"] = fails + 1         # keep what we have
+            meta["fails"] = int(meta.get("fails", 0)) + 1       # keep what we have
         else:
             if tsdb:
                 events = fresh if not errors else (events if events is not None else fresh)
-            elif mode == "full" and not errors:
+            elif full and not errors:
                 events = smartcache.prune_events(fresh, now, back, ahead)
             else:
                 events = smartcache.merge_events(events, fresh)
-            if mode == "full" and not errors:
-                meta["full_at"] = now
-                meta["sig"] = sig
-            meta["live_at"] = now
-            meta["fails"] = fails + 1 if errors else 0
+            if full and not errors:
+                meta.update(full_at=now, sig=sig, seen={})
+            elif not errors:
+                seen = meta.setdefault("seen", {})
+                for d in dates:
+                    seen[d.isoformat()] = now
+            meta["checked_at"] = now
+            meta["fails"] = int(meta.get("fails", 0)) + 1 if errors else 0
         # Each run is a fresh process, so the store must always hold the latest poll.
         smartcache.save_json(_store_file(path), {"events": events or [], "meta": meta})
 
-    events = events or []
-    view = plan_view(path, events)
-    if meta.get("fails"):
-        next_due = meta.get("attempt_at", now) + smartcache.backoff_seconds(meta["fails"], 30)
-    else:
-        cands = [smartcache.full_due_at(meta.get("full_at"), tz, smartcache.slots_for(view, now, rel))]
-        interval, wake = smartcache.live_plan(path, view, now, rel)
-        if interval:
-            cands.append(meta.get("live_at", now) + interval)
-        elif wake:
-            cands.append(wake)
-        next_due = min(cands)
-    return events, next_due, errors or meta.get("fails", 0)
+    _, after = plan_now()
+    next_due = after.next_due if after.mode is None else now + 60
+    return (events or []), next_due, errors or meta.get("fails", 0)
 
 
 def _local_logo(url):
@@ -809,6 +794,8 @@ def _local_logo(url):
             return url
     except OSError:
         pass
+    if "espncdn.com" in url and not meter.acquire("logos"):
+        return url
     try:
         os.makedirs(LOGO_DIR, exist_ok=True)
         req = request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -866,12 +853,11 @@ def build(cfg, force=False):
 
     games, races, golf = [], [], []
     now = time.time()
-    # "Refresh every N s" in the settings now means: while a favourite game is live, poll
-    # this often. (Nothing is polled when no favourite game is on.)
+    interval = smartcache.clamp_interval(cfg.get("update_interval_minutes"))
     try:
-        smartcache.LIVE_INTERVAL = max(15, int(cfg.get("refresh_seconds", smartcache.LIVE_INTERVAL)))
-    except Exception:
-        pass
+        DAILY_LIMIT[0] = max(0, int(cfg.get("daily_api_limit", 3000)))
+    except (TypeError, ValueError):
+        DAILY_LIMIT[0] = 3000
     league_paths = [p for p in cfg.get("leagues", []) if isinstance(p, str)
                     and league_needed(p, cfg, fav_set, golf_favs)]
     next_due, failing = [], 0
@@ -879,7 +865,7 @@ def build(cfg, force=False):
         with ThreadPoolExecutor(max_workers=min(8, len(league_paths))) as pool:
             fetched = list(pool.map(
                 lambda p: (p,) + refresh_league(p, days_back, window_for(p), tz,
-                                                relevance(p, cfg, fav_set), force, now),
+                                                relevance(p, cfg, fav_set), interval, force, now),
                 league_paths))
     else:
         fetched = []
@@ -924,6 +910,7 @@ def build(cfg, force=False):
         "races": races,
         "golf": golf,
         "fetch_errors": FETCH_ERRORS,
+        "requests_today": meter.snapshot()["total"],
         "has_favorites": bool(fav_set) or bool(racing) or bool(golf_favs),
     }
 

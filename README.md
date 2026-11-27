@@ -5,6 +5,18 @@ A Quickshell bar and desktop shell for Hyprland: bar, app launcher, notification
 A single Quickshell top bar for Hyprland, made of plugins that can each be
 turned on/off, moved, and configured from the bar itself.
 
+## What's new (2026-11-27)
+
+**Scoreboard: cutting down on API polling.** ESPN is now asked only when it matters:
+
+- Schedules are read once a night, just after midnight, usually one request per league per month.
+- A favourite's game later today is checked every 3 hours; a live one once a minute.
+- A new **Update every** setting (1 minute to 24 hours, default 24 h) replaces the old refresh seconds.
+- Requests are counted and capped at 3,000 a day, and a refusal from ESPN pauses them for 30 minutes.
+- NASCAR now uses ESPN's current series address.
+
+In testing, a first load of a five-league setup took 10 requests, down from 45. See [Scoreboard plugin](#scoreboard-plugin).
+
 ## What's new (2026-11-24)
 
 **Scoreboard: smart polling and offline mode.** The scoreboard plugin used to re-read ESPN every minute (about 45 requests a minute for a typical setup). Now it only goes to the network when there is something to learn, and it remembers the rest:
@@ -108,13 +120,13 @@ Shows live and upcoming scores for your favourite teams (and NASCAR/F1/IndyCar d
 
 | situation | network use |
 |---|---|
-| favourite game more than 24 h away | 2 schedule checks a day (00:05, 12:05) |
-| favourite game within 24 h | 4 schedule checks a day (00:05, 06:05, 12:05, 17:05) |
-| favourite game starting in <5 min, or in progress | 1 request per poll for today's games |
+| nothing happening | one schedule read per followed league, just after midnight |
+| favourite game later today | a check every 3 hours until it starts |
+| favourite game in progress | 1 request a minute for that day's games |
 | no favourite in a league | nothing (league is skipped) |
-| offline | retries with growing delays (1 min up to 15 min); last known schedule keeps showing |
+| offline | retries with growing delays (up to 1 hour, 5 minutes during a live game) |
 
-`refresh_seconds` (Settings > Scoreboard) is how often a *live* favourite game is polled; it does nothing while no favourite game is on. The Refresh button re-reads games happening around now.
+**Update every** (Settings > Scoreboard, 1 minute to 24 hours, default 24 h) additionally re-checks today's games that often; live games are always 1 minute. The Refresh button re-reads today's games. Every ESPN request is counted in `~/.cache/auggment/api_usage.json` and capped at `daily_api_limit` (default 3000); a 429/403 from ESPN pauses requests for 30 minutes.
 
 **What is cached** (all under `~/.cache/auggment/`, safe to delete; it rebuilds itself):
 
@@ -122,6 +134,7 @@ Shows live and upcoming scores for your favourite teams (and NASCAR/F1/IndyCar d
 - `scoreboard-logos/` — logos of your favourite games, shown from disk
 - `scoreboard-misc.json` — team lists for the picker (7 days)
 - `scoreboard-cache.json` — the ready-to-display document, stamped with `next_poll_at`
+- `api_usage.json` — ESPN requests per day
 
 `smartcache.py` holds the polling rules and is shared with the [Auggmented Scoreboard](https://github.com/auggnation/Auggment-Scoreboard) kiosk app; keep the two copies identical.
 

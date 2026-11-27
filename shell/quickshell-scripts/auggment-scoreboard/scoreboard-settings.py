@@ -235,7 +235,7 @@ def main():
             "Days ahead: %s" % cfg.get("days_ahead", 7),
             "Days back: %s" % cfg.get("days_back", 1),
             "Rotate: %ss" % cfg.get("rotate_seconds", 6),
-            "Refresh: %ss" % cfg.get("refresh_seconds", 60),
+            "Update every: %s min" % cfg.get("update_interval_minutes", 1440),
             "Bar logos: %s" % ("On" if cfg.get("bar_logos", True) else "Off"),
             "League last in cycle: %s" % ("On" if cfg.get("league_in_cycle") else "Off"),
             "Game state colours",
@@ -264,8 +264,9 @@ def main():
         elif choice.startswith("Rotate"):
             cfg["rotate_seconds"] = pick_number("Rotate seconds (2-60)", cfg.get("rotate_seconds", 6), 2, 60)
             _save(cfg)
-        elif choice.startswith("Refresh:"):
-            cfg["refresh_seconds"] = pick_number("Refresh seconds (15-600)", cfg.get("refresh_seconds", 60), 15, 600, 5)
+        elif choice.startswith("Update every:"):
+            cfg["update_interval_minutes"] = pick_number("Update interval in minutes (1-1440; live games are always 1)",
+                                                         cfg.get("update_interval_minutes", 1440), 1, 1440)
             _save(cfg)
         elif choice.startswith("Bar logos"):
             cfg["bar_logos"] = not cfg.get("bar_logos", True)

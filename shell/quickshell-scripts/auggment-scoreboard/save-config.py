@@ -34,7 +34,7 @@ DEFAULTS = {
     "state_colors": {},
     "bar_logos": True,
     "league_in_cycle": False,
-    "refresh_seconds": 60,
+    "update_interval_minutes": 1440,
     "rotate_seconds": 6,
     "max_games": 40,
     "position": "right",

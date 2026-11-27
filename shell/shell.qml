@@ -3973,12 +3973,15 @@ ShellRoot {
                             value: String(root.cfgVal("rotate_seconds", 6))
                             onPicked: function (v) { root.saveSb({ rotate_seconds: parseInt(v) }) }
                         }
-                        Text { text: "Refresh"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
+                        Text { text: "Update every"; color: theme.textMuted; font.family: theme.fontFamily; font.pixelSize: theme.fontSize - 1; Layout.alignment: Qt.AlignVCenter }
                         Stepper {
                             Layout.alignment: Qt.AlignRight
-                            options: root.listOpts([15, 30, 45, 60, 90, 120, 180, 300, 600], "s")
-                            value: String(root.cfgVal("refresh_seconds", 60))
-                            onPicked: function (v) { root.saveSb({ refresh_seconds: parseInt(v) }) }
+                            // Outside live games (those are always 1 minute).
+                            options: [1, 5, 15, 30, 60, 120, 180, 360, 720, 1440].map(function (m) {
+                                return { value: String(m), label: m < 60 ? m + " min" : (m / 60) + " h" }
+                            })
+                            value: String(root.cfgVal("update_interval_minutes", 1440))
+                            onPicked: function (v) { root.saveSb({ update_interval_minutes: parseInt(v) }) }
                         }
                     }
 

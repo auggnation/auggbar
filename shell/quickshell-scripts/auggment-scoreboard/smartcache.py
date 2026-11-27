@@ -1,21 +1,24 @@
 """Smart polling + offline cache helpers for Auggmented Scoreboard.
 
 Nothing in here touches Flask or the network except the logo downloader, so the
-scheduling rules can be unit-tested on their own.
+scheduling rules can be unit-tested on their own. The same file is used by the auggbar
+desktop bar; keep the two copies identical.
 
-Polling model
--------------
-Each league is polled in one of two ways:
+When ESPN is asked for anything (``plan_league``)
+------------------------------------------------
+1. **Nightly** - just after local midnight (and the first time a league is seen, or when
+   its window/conference filter changes) the whole date window is read, as one request
+   per calendar month where ESPN supports it. If nothing is happening that is the only
+   traffic for the next 24 hours.
+2. **Game day** - a tracked game later today is re-checked every few hours
+   (GAMEDAY_INTERVAL) in case it moved or already started.
+3. **Live** - from just before the scheduled start until it is final, the day that game
+   is on is re-read every LIVE_INTERVAL (one request covers every game that day).
+4. **Update interval** - optional user setting (1 minute - 24 hours). Below 24 hours,
+   today's unfinished games are also re-checked that often.
 
-* **full**  - the whole date window (days_back .. days_ahead).  Needed to learn
-  about new games and changed start times.  Runs at a few fixed local times
-  each day (SCHEDULE_SLOTS - the first one is just after midnight), whenever the
-  league is first seen, and whenever its window/conference filter changes.
-* **live**  - only today's slate.  Runs ONLY while a game is in progress or is
-  about to start (see ``live_plan``).  Between games nothing is fetched.
-
-Everything fetched is persisted to ``cache/`` so a restart (or a dead network)
-still shows the last known schedule, team list and logos.
+Everything fetched is persisted to ``cache/`` so a restart (or a dead network) still
+shows the last known schedule, team list and logos.
 """
 
 import hashlib
@@ -25,36 +28,48 @@ import re
 import tempfile
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from collections import namedtuple
+from datetime import date, datetime, timedelta, timezone
 
 try:                       # optional: only used for timestamp formats fromisoformat rejects
     from dateutil import parser as _dtparser
 except Exception:
     _dtparser = None
 
-# Local wall-clock times (hour, minute) for the "does the schedule still look the
-# same?" check.  00:05 is the nightly check; the others catch same-day time changes.
-SCHEDULE_SLOTS = ((0, 5), (6, 5), (12, 5), (17, 5))
-# When nothing we care about starts within QUIET_HOURS, only the nightly check and
-# one midday check run - the bare minimum to notice a rescheduled game.
-QUIET_SLOTS = ((0, 5), (12, 5))
-QUIET_HOURS = 24
+try:                       # ESPN buckets its "dates=" parameter by US Eastern time
+    from zoneinfo import ZoneInfo
+    FEED_TZ = ZoneInfo("America/New_York")
+except Exception:          # pragma: no cover - very old Python / no tz database
+    FEED_TZ = timezone(timedelta(hours=-5))
 
-LIVE_INTERVAL = 30            # seconds between polls while a game is in progress
-PRE_INTERVAL = 60             # seconds between polls in the lead-up to a start
-PRE_LEAD = timedelta(minutes=5)     # start polling this long before first pitch
-PRE_GRACE = timedelta(hours=3)      # keep polling a delayed start this long
-LIVE_MAX_AGE = timedelta(hours=14)  # ignore "in progress" games older than this (stuck feeds)
+NIGHTLY = (0, 1)                      # local (hour, minute) of the nightly grab
+LIVE_INTERVAL = 60                    # seconds between polls while a tracked game is live
+GAMEDAY_INTERVAL = 3 * 3600           # re-check a tracked game that is later today
+DELAYED_INTERVAL = 15 * 60            # a start that is very late: stop asking every minute
+PRE_LEAD = timedelta(minutes=1)       # begin live polling this long before the start
+PROMPT_START = timedelta(hours=1)     # a "pre" game this far past its start is still polled live
+PRE_GRACE = timedelta(hours=8)        # give up on a delayed start after this
+LIVE_MAX_AGE = timedelta(hours=8)     # ignore "in progress" games older than this (stuck feeds)
 
-# Slow sports: multi-day events do not need a 30 s heartbeat.
-# path -> (poll seconds, max event age)
+# User-selectable update interval, in minutes.
+UPDATE_MIN_MINUTES = 1
+UPDATE_MAX_MINUTES = 24 * 60
+
+# Multi-day events do not need a one-minute heartbeat: path -> (poll seconds, max age)
 SLOW_LEAGUES = {
-    "golf/pga": (300, timedelta(days=5)),
-    "cricket/current": (120, timedelta(days=6)),
+    "golf/pga": (600, timedelta(days=5)),
+    "cricket/current": (300, timedelta(days=6)),
 }
 
-MAX_BACKOFF = 15 * 60         # cap for failure backoff (seconds)
-DISK_WRITE_MIN_GAP = 300      # live polls persist at most this often (SD-card friendly)
+# Leagues where one "dates=YYYYMM" request returns every game of the month. High-volume
+# college sports are truncated by ESPN there, so they are read day by day instead.
+MONTH_QUERY_PREFIXES = ("football/", "baseball/mlb", "basketball/nba", "basketball/wnba",
+                        "hockey/nhl", "soccer/", "racing/", "golf/")
+MONTH_LIMIT = 500                     # larger values make ESPN fall back to 25 results
+
+MAX_BACKOFF = 60 * 60                 # cap for failure backoff while idle (seconds)
+MAX_LIVE_BACKOFF = 5 * 60             # ... and while a tracked game is on
+DISK_WRITE_MIN_GAP = 300              # live polls persist at most this often (SD-card friendly)
 
 
 # ─── time helpers ───
@@ -86,84 +101,143 @@ def event_state(event):
         return ""
 
 
-def next_slot_after(ts, tz, slots=SCHEDULE_SLOTS):
-    """First scheduled full-check time strictly after epoch ``ts`` (epoch seconds)."""
+def feed_date(start):
+    """The date ESPN files an event under."""
+    return start.astimezone(FEED_TZ).date()
+
+
+def next_nightly(ts, tz):
+    """First nightly grab strictly after epoch ``ts``, in the user's local time."""
     base = datetime.fromtimestamp(ts, tz)
-    for day_offset in (0, 1):
+    for day_offset in (0, 1, 2):
         day = (base + timedelta(days=day_offset)).date()
-        for hour, minute in slots:
-            cand = tz.localize(datetime(day.year, day.month, day.day, hour, minute)) \
-                if hasattr(tz, "localize") else \
-                datetime(day.year, day.month, day.day, hour, minute, tzinfo=tz)
-            if cand.timestamp() > ts:
-                return cand.timestamp()
-    return ts + 6 * 3600  # unreachable with a non-empty slot list
+        naive = datetime(day.year, day.month, day.day, *NIGHTLY)
+        cand = tz.localize(naive) if hasattr(tz, "localize") else naive.replace(tzinfo=tz)
+        if cand.timestamp() > ts:
+            return cand.timestamp()
+    return ts + 86400  # pragma: no cover
+
+
+def clamp_interval(minutes):
+    """The user's update interval in seconds, limited to 1 minute .. 24 hours."""
+    try:
+        minutes = float(minutes)
+    except (TypeError, ValueError):
+        minutes = UPDATE_MAX_MINUTES
+    return int(max(UPDATE_MIN_MINUTES, min(UPDATE_MAX_MINUTES, minutes)) * 60)
 
 
 # ─── polling decisions ───
 
-def full_due_at(full_at, tz, slots=SCHEDULE_SLOTS):
-    """Epoch time the next full refresh is due (0 = immediately)."""
-    if not full_at:
-        return 0
-    return next_slot_after(full_at, tz, slots)
+# mode     'full' (whole window), 'update' (only ``dates``) or None (leave ESPN alone)
+# dates    feed dates an 'update' must read
+# next_due epoch time something next becomes due
+# reason   'full' | 'live' | 'gameday' | 'interval' | 'idle' | 'backoff'
+Plan = namedtuple("Plan", "mode dates next_due reason")
+
+_RANK = {"live": 0, "gameday": 1, "interval": 2}
 
 
-def slots_for(events, now_ts, relevant=None):
-    """Full-check slots to use: all of them when a relevant game is close (or one is
-    already in progress), otherwise the reduced quiet set."""
-    horizon = now_ts + QUIET_HOURS * 3600
-    for ev in events or ():
-        if relevant is not None and not relevant(ev):
-            continue
-        if event_state(ev) == "in":
-            return SCHEDULE_SLOTS
-        start = parse_utc(ev.get("date"))
-        if start is not None and now_ts - 6 * 3600 <= start.timestamp() <= horizon:
-            return SCHEDULE_SLOTS
-    return QUIET_SLOTS
+def backoff_seconds(fails, cap=MAX_BACKOFF):
+    """Retry delay after ``fails`` consecutive failures (>=1): 1, 2, 4 ... minutes."""
+    return min(cap, 60 * (2 ** (min(fails, 10) - 1)))
 
 
-def live_plan(path, events, now_ts, relevant=None):
-    """Decide whether this league needs live polling right now.
+def plan_league(path, events, meta, now_ts, tz, sig, interval_s, relevant=None):
+    """Decide what (if anything) to ask ESPN for one league right now.
 
-    ``relevant`` (optional) is a predicate on a raw event; games it rejects (e.g.
-    non-favourite teams when only favourites are shown) never trigger polling.
-
-    Returns ``(interval, wake_ts)``:
-      * ``interval`` - seconds between polls if a game is live/about to start,
-        else ``None`` (nothing to poll for).
-      * ``wake_ts``  - when polling should begin for the next upcoming game
-        (epoch seconds) or ``None``.  Informational / used for status.
+    ``meta``      stored bookkeeping: full_at, seen {iso date: epoch}, sig, fails, attempt_at
+    ``sig``       identifies the window/filter; a change forces a new full read
+    ``interval_s`` the user's update interval (see clamp_interval)
+    ``relevant``  predicate limiting which games count as "tracked" (None = all)
     """
     now = datetime.fromtimestamp(now_ts, timezone.utc)
+    today = datetime.fromtimestamp(now_ts, tz).date()
     live_every, max_age = SLOW_LEAGUES.get(path, (LIVE_INTERVAL, LIVE_MAX_AGE))
-    interval = None
-    wake = None
+    targets = {}                       # feed date -> (period, reason)
+    wake = []
+
+    def want(day, period, reason):
+        old = targets.get(day)
+        if old is None:
+            targets[day] = (period, reason)
+        else:
+            targets[day] = (min(old[0], period),
+                            reason if _RANK[reason] < _RANK[old[1]] else old[1])
+
     for ev in events or ():
-        if relevant is not None and not relevant(ev):
-            continue
         start = parse_utc(ev.get("date"))
         if start is None:
             continue
         state = event_state(ev)
-        if state == "in":
-            if now - start <= max_age:
-                interval = live_every if interval is None else min(interval, live_every)
-        elif state == "pre":
-            begin = start - PRE_LEAD
-            if begin <= now <= start + PRE_GRACE:
-                pre_every = max(PRE_INTERVAL, live_every) if path in SLOW_LEAGUES else PRE_INTERVAL
-                interval = pre_every if interval is None else min(interval, pre_every)
-            elif begin > now:
-                ts = begin.timestamp()
-                wake = ts if wake is None else min(wake, ts)
-    return interval, wake
+        day = feed_date(start)
+        is_today = start.astimezone(tz).date() == today
+        if relevant is None or relevant(ev):
+            if state == "in":
+                if now - start <= max_age:
+                    want(day, live_every, "live")
+            elif state == "pre":
+                begin = start - PRE_LEAD
+                if begin <= now <= start + PRE_GRACE:
+                    late = now > start + PROMPT_START
+                    want(day, max(DELAYED_INTERVAL, live_every) if late else live_every, "live")
+                elif now < begin:
+                    wake.append(begin.timestamp())
+                    if is_today:
+                        want(day, min(GAMEDAY_INTERVAL, interval_s), "gameday")
+        if interval_s < UPDATE_MAX_MINUTES * 60 and is_today and state != "post":
+            want(day, interval_s, "interval")
+
+    live = any(r == "live" for _, r in targets.values())
+    full_at = meta.get("full_at")
+    nightly = next_nightly(full_at, tz) if full_at else 0
+    need_full = not full_at or meta.get("sig") != sig or now_ts >= nightly
+
+    fails = int(meta.get("fails") or 0)
+    if fails:
+        retry = meta.get("attempt_at", 0) + backoff_seconds(
+            fails, MAX_LIVE_BACKOFF if live else MAX_BACKOFF)
+        if now_ts < retry:
+            return Plan(None, [], retry, "backoff")
+    if need_full:
+        return Plan("full", [], now_ts, "full")
+
+    seen = meta.get("seen") or {}
+    due, due_reason, upcoming = [], None, [nightly] + wake
+    for day, (period, reason) in sorted(targets.items()):
+        at = seen.get(day.isoformat(), full_at) + period
+        if now_ts >= at:
+            due.append(day)
+            if due_reason is None or _RANK[reason] < _RANK[due_reason]:
+                due_reason = reason
+        else:
+            upcoming.append(at)
+    if due:
+        return Plan("update", due, now_ts, due_reason)
+    state = min((r for _, r in targets.values()), key=_RANK.get, default="idle")
+    return Plan(None, [], min(upcoming), state)
 
 
-def backoff_seconds(fails, base):
-    """Retry delay after ``fails`` consecutive failures (>=1)."""
-    return min(MAX_BACKOFF, base * (2 ** min(fails, 6)))
+def full_queries(path, days_back, days_ahead, now_ts):
+    """Query strings that cover the window: ``[(query, fallback_days)]``.
+
+    One month query replaces up to ~30 daily ones; ``fallback_days`` are what to ask for
+    individually if a month answer looks truncated (empty list for daily queries).
+    """
+    today = datetime.fromtimestamp(now_ts, FEED_TZ).date()
+    first = today - timedelta(days=days_back)
+    days = [first + timedelta(days=i) for i in range((days_back + max(days_ahead, 1)) + 1)]
+    if path.startswith(MONTH_QUERY_PREFIXES):
+        months = {}
+        for d in days:
+            months.setdefault((d.year, d.month), []).append(d)
+        if len(months) < len(days):
+            return [(f"dates={y}{m:02d}&limit={MONTH_LIMIT}", ds) for (y, m), ds in sorted(months.items())]
+    return [(day_query(d), []) for d in days]
+
+
+def day_query(day):
+    return f"dates={day.strftime('%Y%m%d')}"
 
 
 def merge_events(old, fresh):
@@ -270,6 +344,81 @@ class KeyValueCache:
             _atomic_write(self.path, snapshot)
         except Exception as exc:
             print(f"[cache] could not write {self.path}: {exc}")
+
+
+# ─── request meter ───
+
+class RequestMeter:
+    """Counts every request sent to ESPN, per local day, and enforces a daily ceiling.
+
+    The ceiling is a safety net against a bug or an over-eager setting getting the
+    address blocked. ``limit`` is a callable returning the ceiling (0 = no limit).
+    """
+
+    KEEP_DAYS = 14
+    REFUSED_PAUSE = 30 * 60      # silence after ESPN answers 429 / 403
+
+    def __init__(self, path, limit, today=None):
+        self.path = path
+        self._limit = limit
+        self._today = today or (lambda: date.today().isoformat())
+        self._lock = threading.Lock()
+        self._days = None
+        self._paused = 0
+
+    def _load(self):
+        if self._days is None:
+            raw = load_json(self.path, {})
+            raw = raw if isinstance(raw, dict) else {}
+            days = raw.get("days")
+            self._days = days if isinstance(days, dict) else {}
+            self._paused = raw.get("paused_until") or 0
+
+    def _save(self):
+        save_json(self.path, {"days": self._days, "paused_until": self._paused})
+
+    def pause(self, now=None):
+        """ESPN refused a request: send nothing for a while (survives restarts)."""
+        with self._lock:
+            self._load()
+            self._paused = (now or time.time()) + self.REFUSED_PAUSE
+            self._save()
+
+    def paused_until(self, now=None):
+        with self._lock:
+            self._load()
+            return self._paused if self._paused > (now or time.time()) else None
+
+    def acquire(self, kind):
+        """Count one request of ``kind``; False (and not counted) if over today's ceiling
+        or paused after a refusal."""
+        if self.paused_until():
+            return False
+        with self._lock:
+            self._load()
+            counts = self._days.setdefault(self._today(), {})
+            limit = int(self._limit() or 0)
+            sent = sum(v for k, v in counts.items() if k != "blocked")
+            allowed = not limit or sent < limit
+            key = kind if allowed else "blocked"
+            counts[key] = counts.get(key, 0) + 1
+            for old in sorted(self._days)[:-self.KEEP_DAYS]:
+                del self._days[old]
+            # Blocked attempts can come in bursts; no need to write each of them.
+            if allowed or counts[key] % 50 == 1:
+                self._save()
+            return allowed
+
+    def snapshot(self):
+        with self._lock:
+            self._load()
+            today = self._today()
+            counts = dict(self._days.get(today, {}))
+            blocked = counts.pop("blocked", 0)
+            history = {d: sum(v for k, v in c.items() if k != "blocked")
+                       for d, c in sorted(self._days.items())}
+        return {"date": today, "total": sum(counts.values()), "by_kind": counts,
+                "blocked": blocked, "limit": int(self._limit() or 0), "history": history}
 
 
 # ─── logo cache ───
