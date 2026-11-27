@@ -23,4 +23,8 @@ done
 pkill -9 -x qs 2>/dev/null
 sleep 0.2
 
+# Don't leak a calling Claude Code session's markers into the bar: every app the
+# launcher starts would inherit them (e.g. "Transcript saving is off").
+unset CLAUDECODE AI_AGENT "${!CLAUDE_CODE_@}" CLAUDE_PID CLAUDE_EFFORT
+
 setsid /usr/bin/qs -p "$CFG" >"$LOG" 2>&1 </dev/null &

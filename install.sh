@@ -189,6 +189,7 @@ if [ "$RESTART" = 1 ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
     pkill -x qs 2>/dev/null || true
     pkill -x quickshell 2>/dev/null || true
     sleep 1
+    unset CLAUDECODE AI_AGENT "${!CLAUDE_CODE_@}" CLAUDE_PID CLAUDE_EFFORT
     setsid -f qs -p "$QS_DIR" >/dev/null 2>&1 < /dev/null
 fi
 
