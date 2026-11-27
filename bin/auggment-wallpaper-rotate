@@ -73,6 +73,14 @@ if [[ "${1:-}" == "--once" ]]; then
     exit 0
 fi
 
+# After a reboot or fresh login nothing is on screen yet, but the last change may
+# be less than one interval old (or rotation paused), so don't wait for the
+# schedule: put the last wallpaper back now, or pick one if it is gone.
+if ! pgrep -x swaybg >/dev/null; then
+    img="$(cat "$LAST" 2>/dev/null)"
+    [ -f "$img" ] || img="$(pick)" && apply "$img"
+fi
+
 # Wall-clock scheduling: `sleep N` runs on a clock that stops while the laptop is
 # suspended, so a long sleep would sit through (and long after) a nap. Instead,
 # wake every few seconds and compare against the real time: after resume the due
